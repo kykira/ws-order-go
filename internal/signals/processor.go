@@ -67,15 +67,11 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
 	if len(cfg.Tasks) == 0 {
 		p.logger.Error("signal", "no tasks configured, ignore")
 		return nil
 	}
 
-	var firstErr error
 	for _, task := range cfg.Tasks {
 		if !task.Enabled {
 			continue
@@ -103,19 +99,20 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 
 		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v task=%s action=%s amount=%s unit=%s", source, sig.OrderID, task.ID, action, amount, unit))
 
-		if err := p.order.PlaceOrder(ctx, task, order.PlaceOrderRequest{
+		// Execute PlaceOrder asynchronously to avoid blocking other tasks
+		go func(t config.TaskConfig, req order.PlaceOrderRequest) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if err := p.order.PlaceOrder(ctx, t, req); err != nil {
+				p.logger.Error("signal", fmt.Sprintf("task=%s order error: %v", t.ID, err))
+			}
+		}(task, order.PlaceOrderRequest{
 			Amount: amount,
 			Unit:   unit,
 			Action: action,
-		}); err != nil {
-			p.logger.Error("signal", fmt.Sprintf("task=%s order error: %v", task.ID, err))
-			if firstErr == nil {
-				firstErr = err
-			}
-			// Continue other tasks even if one fails.
-			continue
-		}
+		})
 	}
 
-	return firstErr
+	return nil
 }

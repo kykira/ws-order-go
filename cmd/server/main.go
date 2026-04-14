@@ -42,7 +42,6 @@ func main() {
 	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsCli))
 	mux.HandleFunc("/api/ws/disconnect", handleWSDisconnect(cfgManager, logger, wsCli))
 	mux.HandleFunc("/api/ws/status", handleWSStatus(wsCli))
-	mux.HandleFunc("/api/test-order", handleTestOrder(cfgManager, logger, orderClient)) // legacy
 	mux.HandleFunc("/api/tasks/test", handleTestTask(cfgManager, logger, orderClient))
 	mux.HandleFunc("/api/logs/stream", handleLogsStream(logger))
 	mux.HandleFunc("/ws/connect", wsSrv.HandleWS)
@@ -176,58 +175,6 @@ func handleWSStatus(wsCli *wsclient.Client) http.HandlerFunc {
 	}
 }
 
-func handleTestOrder(cfgMgr *config.Manager, logger *logs.Logger, orderClient *order.Client) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-		var payload struct {
-			Direction string `json:"direction"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"invalid json"}`))
-			return
-		}
-
-		dir := strings.ToUpper(strings.TrimSpace(payload.Direction))
-		if dir != "LONG" && dir != "SHORT" {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"direction must be LONG or SHORT"}`))
-			return
-		}
-
-		cfg := cfgMgr.Get()
-		task, ok := firstEnabledTask(cfg.Tasks)
-		if !ok {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"no enabled task"}`))
-			return
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		if err := orderClient.PlaceOrder(ctx, task, order.PlaceOrderRequest{
-			Amount: "5",
-			Unit:   "TEN_MINUTE",
-			Action: dir,
-			IsTest: true,
-		}); err != nil {
-			logger.Error("test", fmt.Sprintf("test order error: %v", err))
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(`{"error":"order request failed"}`))
-			return
-		}
-
-		logger.Info("test", fmt.Sprintf("test order sent direction=%s", dir))
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	}
-}
-
 func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *order.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -275,7 +222,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		if err := orderClient.PlaceOrder(ctx, task, order.PlaceOrderRequest{
-			Amount: "5",
+			Amount: "3",
 			Unit:   "TEN_MINUTE",
 			Action: action,
 			IsTest: true,
@@ -296,18 +243,6 @@ func findTask(tasks []config.TaskConfig, id string) (config.TaskConfig, bool) {
 		if t.ID == id {
 			return t, true
 		}
-	}
-	return config.TaskConfig{}, false
-}
-
-func firstEnabledTask(tasks []config.TaskConfig) (config.TaskConfig, bool) {
-	for _, t := range tasks {
-		if t.Enabled {
-			return t, true
-		}
-	}
-	if len(tasks) > 0 {
-		return tasks[0], true
 	}
 	return config.TaskConfig{}, false
 }
