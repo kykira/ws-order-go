@@ -32,10 +32,10 @@ COPY --from=builder /app/web /app/web
 RUN mkdir -p /app/data && chmod 777 /app/data
 
 # Expose the default port
-EXPOSE 9000
+EXPOSE 9946
 
 # Set default environment variables
-ENV WSORDER_PORT=9000
+ENV WSORDER_PORT=9946
 
 # Run the binary
 CMD ["/app/wsorder-server"]

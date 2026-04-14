@@ -55,14 +55,33 @@ wsorder-go/
 # 构建镜像
 docker build -t wsorder-go .
 
-# 运行容器 (映射 9000 端口，并挂载数据目录持久化配置和日志)
+# 运行容器 (映射 9946 端口，并挂载数据目录持久化配置和日志)
 docker run -d \
-  -p 9000:9000 \
+  -p 9946:9946 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config.json:/app/config.json \
   --name wsorder \
   wsorder-go
 ```
+
+### 使用 Docker Compose
+
+推荐使用 `docker-compose` 来管理服务，这样配置更直观，数据持久化更稳定。
+
+1. 在项目根目录下确保已生成空的 `config.json`（或手动创建）：
+   ```bash
+   touch config.json
+   ```
+
+2. 启动服务：
+   ```bash
+   docker-compose up -d
+   ```
+
+3. 停止服务：
+   ```bash
+   docker-compose down
+   ```
 
 ### GitHub Actions 自动构建
 

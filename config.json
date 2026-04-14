@@ -1,6 +1,6 @@
 {
   "server": {
-    "port": 9101
+    "port": 9946
   },
   "upstream": {
     "wsUrl": "",

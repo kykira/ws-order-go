@@ -46,7 +46,7 @@ type Manager struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Server: ServerConfig{Port: 9000},
+		Server: ServerConfig{Port: 9946},
 		Upstream: UpstreamConfig{
 			WSUrl:   "",
 			WSKey:   "",
