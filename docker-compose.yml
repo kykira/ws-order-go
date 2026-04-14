@@ -2,9 +2,8 @@ version: '3.8'
 
 services:
   wsorder:
-    # 替换为你的 GitHub 账户名或组织名（例如：ghcr.io/your-username/wsorder-go:latest）
-    image: ghcr.io/kykira/wsorder-go:latest
-    container_name: wsorder-go
+    image: ghcr.io/kykira/wsordergo:latest
+    container_name: wsordergo
     restart: unless-stopped
     ports:
       - "9946:9946"

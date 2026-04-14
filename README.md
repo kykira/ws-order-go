@@ -60,8 +60,8 @@ docker run -d \
   -p 9946:9946 \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/config.json:/app/config.json \
-  --name wsorder \
-  wsorder-go
+  --name wsordergo \
+  ghcr.io/kykira/wsordergo:latest
 ```
 
 ### 使用 Docker Compose
