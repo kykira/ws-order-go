@@ -131,6 +131,32 @@ function initActions() {
     });
   }
 
+  const btnImportJson = document.getElementById("btn-import-json");
+  if (btnImportJson) {
+    btnImportJson.addEventListener("click", () => {
+      const jsonStr = prompt("请粘贴 config.json 的完整内容：");
+      if (!jsonStr) return;
+      try {
+        const cfg = JSON.parse(jsonStr);
+        setValue("wsUrl", cfg.upstream?.wsUrl || "");
+        setValue("wsKey", cfg.upstream?.wsKey || "");
+        setChecked("wsEnabled", !!cfg.upstream?.enabled);
+        
+        stateTasks = normalizeTasks(cfg);
+        renderTasks(stateTasks);
+        
+        appendLog({
+          time: new Date().toISOString(),
+          level: "INFO",
+          source: "ui",
+          message: "JSON 配置导入成功（未保存，请确认无误后点击“保存配置”）",
+        });
+      } catch (err) {
+        alert("JSON 解析失败: " + err.message);
+      }
+    });
+  }
+
   const btnAdd = document.getElementById("btn-add-task");
   if (btnAdd) {
     btnAdd.addEventListener("click", () => {
@@ -264,15 +290,15 @@ function renderTasks(tasks) {
         return;
       }
 
-      if (action === "test-long" || action === "test-short") {
-        const direction = action === "test-long" ? "LONG" : "SHORT";
+      if (action === "test-buy" || action === "test-sell") {
+        const testAction = action === "test-buy" ? "buy" : "sell";
         try {
-          await apiPost("/api/tasks/test", { taskId, direction });
+          await apiPost("/api/tasks/test", { taskId, action: testAction });
           appendLog({
             time: new Date().toISOString(),
             level: "INFO",
             source: "ui",
-            message: `任务测试下单已发送 task=${taskId} direction=${direction}`,
+            message: `任务测试下单已发送 task=${taskId} action=${testAction}`,
           });
         } catch (err) {
           appendLog({
@@ -313,8 +339,8 @@ function taskCardHtml(t) {
         </label>
       </div>
       <div class="flex flex-col gap-2 w-[11.5rem]">
-        <button type="button" class="btn-primary" data-action="test-long" data-task-id="${id}">测试 LONG</button>
-        <button type="button" class="btn-ghost" data-action="test-short" data-task-id="${id}">测试 SHORT</button>
+        <button type="button" class="btn-primary" data-action="test-buy" data-task-id="${id}">测试 BUY</button>
+        <button type="button" class="btn-ghost" data-action="test-sell" data-task-id="${id}">测试 SELL</button>
         <button type="button" class="btn-ghost" data-action="delete" data-task-id="${id}">删除任务</button>
       </div>
     </div>
@@ -351,7 +377,7 @@ function taskCardHtml(t) {
       </div>
       <div>
         <label class="field-label mb-1">Body</label>
-        <p class="field-hint mb-2">支持变量: {{amount}}, {{unit}}, {{action}}</p>
+        <p class="field-hint mb-2">支持变量: {{amount}}, {{unit}}, {{action}} (或 {{direction}})</p>
         <textarea rows="6" class="input font-mono text-xs" data-field="body" placeholder='{"amount": "{{amount}}"}'>${escapeHtml(t.body)}</textarea>
       </div>
     </div>

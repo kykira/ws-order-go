@@ -237,8 +237,8 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
 		var payload struct {
-			TaskID    string `json:"taskId"`
-			Direction string `json:"direction"`
+			TaskID string `json:"taskId"`
+			Action string `json:"action"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -252,10 +252,10 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			return
 		}
 
-		dir := strings.ToUpper(strings.TrimSpace(payload.Direction))
-		if dir != "LONG" && dir != "SHORT" {
+		action := strings.ToLower(strings.TrimSpace(payload.Action))
+		if action != "buy" && action != "sell" {
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"direction must be LONG or SHORT"}`))
+			_, _ = w.Write([]byte(`{"error":"action must be buy or sell"}`))
 			return
 		}
 
@@ -277,7 +277,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 		if err := orderClient.PlaceOrder(ctx, task, order.PlaceOrderRequest{
 			Amount: "5",
 			Unit:   "TEN_MINUTE",
-			Action: dir,
+			Action: action,
 			IsTest: true,
 		}); err != nil {
 			logger.Error("test", fmt.Sprintf("test task order error task=%s: %v", task.ID, err))
@@ -286,7 +286,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			return
 		}
 
-		logger.Info("test", fmt.Sprintf("test task order sent task=%s direction=%s", task.ID, dir))
+		logger.Info("test", fmt.Sprintf("test task order sent task=%s action=%s", task.ID, action))
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}
 }
