@@ -1,0 +1,25 @@
+{
+  "server": {
+    "port": 9101
+  },
+  "upstream": {
+    "wsUrl": "",
+    "wsKey": "",
+    "enabled": false
+  },
+  "tasks": [
+    {
+      "id": "task-proxy-test",
+      "name": "Proxy Test",
+      "enabled": true,
+      "skipSignals": 0,
+      "httpProxyUrl": "",
+      "apiUrl": "https://api.ipify.org?format=json",
+      "method": "GET",
+      "headers": "",
+      "body": "",
+      "valueBuy": "",
+      "valueSell": ""
+    }
+  ]
+}

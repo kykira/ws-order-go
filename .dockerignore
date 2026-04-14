@@ -1,0 +1,23 @@
+# .dockerignore
+.git
+.gitignore
+.github/
+
+# Development and runtime files
+config.json
+data/
+order.log
+
+# Build artifacts
+wsorder-server
+*.exe
+*.out
+*.app
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+
+# Vendor directory
+vendor/

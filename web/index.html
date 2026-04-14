@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WS 下单桥接服务控制台</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <div class="min-h-screen flex flex-col">
+      <header class="bg-white shadow">
+        <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-4">
+          <div>
+            <h1 class="text-xl font-semibold tracking-tight">WS 下单桥接服务</h1>
+            <p class="text-sm text-slate-500 mt-1">
+              监听 WebSocket 信号，按配置触发下单 HTTP 请求。
+            </p>
+          </div>
+          <div class="text-right text-xs text-slate-400">
+            <div id="ws-status" class="mt-1 inline-flex items-center px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">
+              WS 上游状态: <span class="ml-1 font-medium">未知</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="flex-1 max-w-[90rem] mx-auto w-full px-4 py-6">
+        <div class="grid gap-6 lg:grid-cols-12 h-full items-start">
+          
+          <!-- 左侧：实时日志 -->
+          <section class="lg:col-span-4 bg-black rounded-xl shadow-inner border border-slate-800 p-4 flex flex-col h-[calc(100vh-8rem)] sticky top-6">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-sm font-semibold text-slate-100">实时日志</h2>
+              <span class="text-xs text-slate-500">最近 500 条</span>
+            </div>
+            <div id="log-container" class="flex-1 overflow-auto text-xs font-mono leading-relaxed log-scroll"></div>
+          </section>
+
+          <!-- 右侧：配置面板与任务 -->
+          <section class="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-100 p-5 space-y-4">
+          <div class="flex items-start justify-between gap-4">
+            <div class="space-y-2">
+              <div class="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                Config Panel
+              </div>
+              <div>
+                <h2 class="text-base font-semibold text-slate-900">
+                  配置面板
+                </h2>
+                <p class="mt-1 text-sm text-slate-500">
+                  配置上游连接、下单任务并导入请求模板。
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btn-add-task" class="btn-ghost text-xs py-1.5 px-3">
+                + 添加任务
+              </button>
+              <button id="btn-save-config" class="inline-flex items-center px-3 py-1.5 rounded-md bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-1">
+                保存配置
+              </button>
+            </div>
+          </div>
+
+          <form id="config-form" class="space-y-4">
+            <div class="config-group">
+              <div class="config-group-header">
+                <div>
+                  <div class="config-group-badge">
+                    连接配置
+                  </div>
+                  <h3 class="config-group-title">
+                    上游 WebSocket
+                  </h3>
+                </div>
+                <div class="flex gap-2">
+                  <button type="button" id="btn-ws-connect" class="btn-primary text-xs py-1 px-3">连接</button>
+                  <button type="button" id="btn-ws-disconnect" class="btn-ghost text-xs py-1 px-3">断开</button>
+                </div>
+              </div>
+
+              <div class="grid gap-4 md:grid-cols-2">
+                <div class="field md:col-span-2">
+                  <label class="field-label" for="wsUrl">
+                    wsUrl <span class="field-tag">必填</span>
+                  </label>
+                  <p class="field-hint">上游信号源地址，建议使用完整的 `ws://` 或 `wss://` 路径。</p>
+                  <input id="wsUrl" type="text" class="input" placeholder="ws://host:port/path" />
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="wsKey">
+                    wsKey <span class="field-tag field-tag-muted">可选</span>
+                  </label>
+                  <p class="field-hint">作为 query key 附加到连接参数中。</p>
+                  <input id="wsKey" type="text" class="input" />
+                </div>
+
+                <label class="toggle-card" for="wsEnabled">
+                  <div>
+                    <div class="field-label">启用上游 WS <span class="field-tag">开关</span></div>
+                    <p class="field-hint">关闭后服务不会主动维持上游连接。</p>
+                  </div>
+                  <input id="wsEnabled" type="checkbox" class="toggle-checkbox" />
+                </label>
+              </div>
+            </div>
+
+            <div id="tasks-container" class="space-y-4 mt-6">
+              <!-- Tasks will be rendered here by app.js -->
+            </div>
+          </form>
+        </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
