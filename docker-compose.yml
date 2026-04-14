@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  wsorder:
+    # 替换为你的 GitHub 账户名或组织名（例如：ghcr.io/your-username/wsorder-go:latest）
+    image: ghcr.io/kykira/wsorder-go:latest
+    container_name: wsorder-go
+    restart: unless-stopped
+    ports:
+      - "9946:9946"
+    environment:
+      - WSORDER_PORT=9946
+    volumes:
+      # 持久化配置文件
+      - ./config.json:/app/config.json
+      # 持久化日志数据
+      - ./data:/app/data
+    # 防止因为没有本地 config.json 导致 docker 报错，可以使用 command 兜底创建
+    # 但一般建议手动 `touch config.json` 再启动
