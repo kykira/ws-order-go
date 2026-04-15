@@ -227,13 +227,13 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			Action: action,
 			IsTest: true,
 		}); err != nil {
-			logger.Error("test", fmt.Sprintf("test task order error task=%s: %v", task.ID, err))
+			logger.Error("test", fmt.Sprintf("test task order error task=[%s]: %v", task.Name, err))
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write([]byte(`{"error":"order request failed"}`))
 			return
 		}
 
-		logger.Info("test", fmt.Sprintf("test task order sent task=%s action=%s", task.ID, action))
+		logger.Info("test", fmt.Sprintf("test task order sent task=[%s] action=%s", task.Name, action))
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}
 }

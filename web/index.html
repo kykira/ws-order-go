@@ -25,20 +25,20 @@
         </div>
       </header>
 
-      <main class="flex-1 max-w-[90rem] mx-auto w-full px-4 py-6">
-        <div class="grid gap-6 lg:grid-cols-12 h-full items-start">
+      <main class="flex-1 max-w-[90rem] mx-auto w-full px-4 py-4 md:py-6">
+        <div class="flex flex-col lg:flex-row gap-6 h-full items-start">
           
-          <!-- 左侧：实时日志 -->
-          <section class="lg:col-span-4 bg-black rounded-xl shadow-inner border border-slate-800 p-4 flex flex-col h-[calc(100vh-8rem)] sticky top-6">
+          <!-- 左侧：实时日志 (移动端在上，PC端在左) -->
+          <section class="w-full lg:w-[400px] xl:w-[480px] shrink-0 bg-black rounded-xl shadow-inner border border-slate-800 p-4 flex flex-col h-[400px] lg:h-[calc(100vh-8rem)] lg:sticky lg:top-6 order-2 lg:order-1">
             <div class="flex items-center justify-between mb-3">
               <h2 class="text-sm font-semibold text-slate-100">实时日志</h2>
               <span class="text-xs text-slate-500">最近 500 条</span>
             </div>
-            <div id="log-container" class="flex-1 overflow-auto text-xs font-mono leading-relaxed log-scroll"></div>
+            <div id="log-container" class="flex-1 overflow-auto text-[11px] md:text-xs font-mono leading-relaxed log-scroll"></div>
           </section>
 
           <!-- 右侧：配置面板与任务 -->
-          <section class="lg:col-span-8 bg-white rounded-xl shadow-sm border border-slate-100 p-5 space-y-4">
+          <section class="flex-1 min-w-0 bg-white rounded-xl shadow-sm border border-slate-100 p-4 md:p-5 space-y-4 order-1 lg:order-2">
           <div class="flex items-start justify-between gap-4">
             <div class="space-y-2">
               <div class="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700">

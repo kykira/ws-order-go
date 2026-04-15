@@ -63,7 +63,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 
 	// Special-case: upstream action=test is treated as a dry-run log only.
 	if source == "upstream" && action == "test" {
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v type=%s action=%s (test only, no order)", source, sig.OrderID, sig.Type, action))
+		p.logger.Info("signal", "上游心跳保活 (ping)")
 		return nil
 	}
 
@@ -83,7 +83,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			if start, ok := p.skipStartTime[task.ID]; ok && now.Sub(start) > 30*time.Minute {
 				p.seenSkip[task.ID] = 0
 				delete(p.skipStartTime, task.ID)
-				p.logger.Info("signal", fmt.Sprintf("task=%s skip counter reset after 30m", task.ID))
+				p.logger.Info("signal", fmt.Sprintf("task=[%s] skip counter reset after 30m", task.Name))
 			}
 
 			// If we still need to skip
@@ -92,12 +92,12 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 					p.skipStartTime[task.ID] = now
 				}
 				p.seenSkip[task.ID]++
-				p.logger.Info("signal", fmt.Sprintf("skip %d/%d from %s for task=%s", p.seenSkip[task.ID], task.SkipSignals, source, task.ID))
+				p.logger.Info("signal", fmt.Sprintf("skip %d/%d from %s for task=[%s]", p.seenSkip[task.ID], task.SkipSignals, source, task.Name))
 				continue
 			}
 		}
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v task=%s action=%s amount=%s unit=%s", source, sig.OrderID, task.ID, action, amount, unit))
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v task=[%s] action=%s amount=%s unit=%s", source, sig.OrderID, task.Name, action, amount, unit))
 
 		// Execute PlaceOrder asynchronously to avoid blocking other tasks
 		go func(t config.TaskConfig, req order.PlaceOrderRequest) {
@@ -105,7 +105,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			defer cancel()
 
 			if err := p.order.PlaceOrder(ctx, t, req); err != nil {
-				p.logger.Error("signal", fmt.Sprintf("task=%s order error: %v", t.ID, err))
+				p.logger.Error("signal", fmt.Sprintf("task=[%s] order error: %v", t.Name, err))
 			}
 		}(task, order.PlaceOrderRequest{
 			Amount: amount,

@@ -82,7 +82,6 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 
 	// Parse Headers
 	lines := strings.Split(task.Headers, "\n")
-	var headerLog []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -96,7 +95,6 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		v = strings.TrimSpace(v)
 		if k != "" {
 			httpReq.Header.Set(k, v)
-			headerLog = append(headerLog, fmt.Sprintf("%s: %s", k, v))
 		}
 	}
 
@@ -105,25 +103,25 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		tag = "[TEST] "
 	}
 
-	c.logger.Info("order", fmt.Sprintf("%stask=[%s] START %s %s\nHeaders: %v\nBody: %s\nProxy: %s",
-		tag, task.ID, method, urlStr, headerLog, bodyStr, task.HTTPProxyURL))
+	c.logger.Info("order", fmt.Sprintf("%stask=[%s] START %s %s\nBody: %s\nProxy: %s",
+		tag, task.Name, method, urlStr, bodyStr, task.HTTPProxyURL))
 
 	httpClient, err := c.httpClientForTask(task)
 	if err != nil {
-		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http client error: %v", tag, task.ID, err))
+		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http client error: %v", tag, task.Name, err))
 		return err
 	}
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error: %v", tag, task.ID, err))
+		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error: %v", tag, task.Name, err))
 		return err
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 
-	c.logger.Info("order", fmt.Sprintf("%stask=[%s] FINISH status=%d\nResponse: %s", tag, task.ID, resp.StatusCode, string(respBody)))
+	c.logger.Info("order", fmt.Sprintf("%stask=[%s] FINISH status=%d\nResponse: %s", tag, task.Name, resp.StatusCode, string(respBody)))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
