@@ -13,13 +13,14 @@ import (
 )
 
 type Signal struct {
-	Type      string      `json:"type"`
-	OrderID   interface{} `json:"orderID"`
-	Action    string      `json:"action"`
-	Timestamp string      `json:"timestamp"`
+	Type       string `json:"type"`
+	OrderID    int64  `json:"orderID"`
+	Action     string `json:"action"`
+	Symbol     string `json:"symbol"`
+	TickerType string `json:"tickerType,omitempty"`
+	Timestamp  string `json:"timestamp"`
 
-	// Keep these for backward compatibility or future extension if needed,
-	// though they may not be present in the new signal format.
+	// Keep these for backward compatibility or future extension if needed
 	Amount    string `json:"amount,omitempty"`
 	Unit      string `json:"unit,omitempty"`
 	Direction string `json:"direction,omitempty"`
@@ -77,6 +78,22 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			continue
 		}
 
+		// Filter by AllowedSymbols
+		if strings.TrimSpace(task.AllowedSymbols) != "" {
+			allowed := false
+			symbols := strings.Split(task.AllowedSymbols, ",")
+			for _, s := range symbols {
+				if strings.TrimSpace(s) != "" && strings.EqualFold(strings.TrimSpace(s), sig.Symbol) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				p.logger.Info("signal", fmt.Sprintf("task=[%s] skipped (symbol %s not in allowed list)", task.Name, sig.Symbol))
+				continue
+			}
+		}
+
 		if applySkip && task.SkipSignals > 0 {
 			now := time.Now()
 			// Reset if 30 minutes have passed since the first skipped signal for this task
@@ -108,9 +125,11 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 				p.logger.Error("signal", fmt.Sprintf("task=[%s] order error: %v", t.Name, err))
 			}
 		}(task, order.PlaceOrderRequest{
-			Amount: amount,
-			Unit:   unit,
-			Action: action,
+			Amount:     amount,
+			Unit:       unit,
+			Action:     action,
+			Symbol:     sig.Symbol,
+			TickerType: sig.TickerType,
 		})
 	}
 

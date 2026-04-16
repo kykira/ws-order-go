@@ -233,6 +233,7 @@ function normalizeTask(t) {
         name: String(task.name || "").trim() || "Task",
         enabled: task.enabled !== false,
         skipSignals: Number(task.skipSignals || 0) || 0,
+        allowedSymbols: String(task.allowedSymbols || ""),
         httpProxyUrl: String(task.httpProxyUrl || ""),
         apiUrl: String(task.apiUrl || ""),
         method: String(task.method || "POST").toUpperCase(),
@@ -377,7 +378,7 @@ function taskCardHtml(t) {
       </div>
       <div>
         <label class="field-label mb-1">Body</label>
-        <p class="field-hint mb-2">支持变量: {{amount}}, {{unit}}, {{action}} (或 {{direction}})</p>
+        <p class="field-hint mb-2">支持变量: {{amount}}, {{unit}}, {{action}}, {{symbol}}, {{tickerType}}</p>
         <textarea rows="6" class="input font-mono text-xs" data-field="body" placeholder='{"amount": "{{amount}}"}'>${escapeHtml(t.body)}</textarea>
       </div>
     </div>
@@ -403,6 +404,12 @@ function taskCardHtml(t) {
         <input class="input" data-field="httpProxyUrl" value="${escapeHtml(t.httpProxyUrl)}" placeholder="http://127.0.0.1:7890" />
       </div>
     </div>
+
+    <div class="mt-3">
+      <label class="field-label mb-1">允许的交易对 (Allowed Symbols) <span class="field-tag field-tag-muted">可选</span></label>
+      <p class="field-hint mb-1">仅当上游信号中的 symbol 匹配时才下单。留空表示允许全部。多个用逗号分隔，如: BTCUSDT,ETHUSDT</p>
+      <input class="input" data-field="allowedSymbols" value="${escapeHtml(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT" />
+    </div>
   </div>
   `;
 }
@@ -426,6 +433,7 @@ function collectTasksFromDom() {
       name: String(get("name") || "").trim() || taskId,
       enabled: getChecked("enabled"),
       skipSignals: Number(get("skipSignals") || 0) || 0,
+      allowedSymbols: String(get("allowedSymbols") || "").trim(),
       httpProxyUrl: String(get("httpProxyUrl") || "").trim(),
       apiUrl: String(get("apiUrl") || "").trim(),
       method: String(get("method") || "POST").trim().toUpperCase(),

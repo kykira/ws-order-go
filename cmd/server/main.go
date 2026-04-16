@@ -186,6 +186,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 		var payload struct {
 			TaskID string `json:"taskId"`
 			Action string `json:"action"`
+			Symbol string `json:"symbol"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -206,6 +207,11 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			return
 		}
 
+		symbol := strings.TrimSpace(payload.Symbol)
+		if symbol == "" {
+			symbol = "BTCUSDT" // Default for testing if empty
+		}
+
 		cfg := cfgMgr.Get()
 		task, ok := findTask(cfg.Tasks, taskID)
 		if !ok {
@@ -222,9 +228,10 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		if err := orderClient.PlaceOrder(ctx, task, order.PlaceOrderRequest{
-			Amount: "3",
+			Amount: "5",
 			Unit:   "TEN_MINUTE",
 			Action: action,
+			Symbol: symbol,
 			IsTest: true,
 		}); err != nil {
 			logger.Error("test", fmt.Sprintf("test task order error task=[%s]: %v", task.Name, err))

@@ -29,10 +29,12 @@ func NewClient(logger *logs.Logger) *Client {
 }
 
 type PlaceOrderRequest struct {
-	Amount string
-	Unit   string
-	Action string
-	IsTest bool
+	Amount     string
+	Unit       string
+	Action     string
+	Symbol     string
+	TickerType string
+	IsTest     bool
 }
 
 // ClearCache removes all cached HTTP clients, forcing them to be recreated.
@@ -63,11 +65,19 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	bodyStr = strings.ReplaceAll(bodyStr, "{{amount}}", req.Amount)
 	bodyStr = strings.ReplaceAll(bodyStr, "{{unit}}", req.Unit)
 	bodyStr = strings.ReplaceAll(bodyStr, "{{action}}", actVal)
+	bodyStr = strings.ReplaceAll(bodyStr, "{{symbol}}", req.Symbol)
+	bodyStr = strings.ReplaceAll(bodyStr, "{{tickerType}}", req.TickerType)
+	// Alias for backward compatibility
+	bodyStr = strings.ReplaceAll(bodyStr, "{{direction}}", actVal)
 
 	urlStr := task.APIUrl
 	urlStr = strings.ReplaceAll(urlStr, "{{amount}}", req.Amount)
 	urlStr = strings.ReplaceAll(urlStr, "{{unit}}", req.Unit)
 	urlStr = strings.ReplaceAll(urlStr, "{{action}}", actVal)
+	urlStr = strings.ReplaceAll(urlStr, "{{symbol}}", req.Symbol)
+	urlStr = strings.ReplaceAll(urlStr, "{{tickerType}}", req.TickerType)
+	// Alias for backward compatibility
+	urlStr = strings.ReplaceAll(urlStr, "{{direction}}", actVal)
 
 	method := strings.ToUpper(strings.TrimSpace(task.Method))
 	if method == "" {
