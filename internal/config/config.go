@@ -24,6 +24,7 @@ type TaskConfig struct {
 	Enabled        bool   `json:"enabled"`
 	SkipSignals    int    `json:"skipSignals"`
 	AllowedSymbols string `json:"allowedSymbols"` // e.g. "BTCUSDT,ETHUSDT" or empty for all
+	ExpiresAt      int64  `json:"expiresAt"`      // Unix timestamp (seconds) for cookie/token expiration
 	HTTPProxyURL   string `json:"httpProxyUrl"`
 	APIUrl         string `json:"apiUrl"`
 	Method         string `json:"method"`

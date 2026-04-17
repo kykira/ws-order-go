@@ -233,6 +233,7 @@ function normalizeTask(t) {
         name: String(task.name || "").trim() || "Task",
         enabled: task.enabled !== false,
         skipSignals: Number(task.skipSignals || 0) || 0,
+        expiresAt: Number(task.expiresAt || 0) || 0,
         allowedSymbols: String(task.allowedSymbols || ""),
         httpProxyUrl: String(task.httpProxyUrl || ""),
         apiUrl: String(task.apiUrl || ""),
@@ -250,6 +251,7 @@ function buildDefaultTask() {
     name: "New Task",
     enabled: true,
     skipSignals: 0,
+    expiresAt: 0,
     httpProxyUrl: "",
     apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
     method: "POST",
@@ -277,6 +279,9 @@ function renderTasks(tasks) {
   }
 
   container.innerHTML = tasks.map((t) => taskCardHtml(t)).join("\n");
+
+  // 初始化倒计时
+  initCountdowns();
 
   container.querySelectorAll("[data-action]").forEach((el) => {
     el.addEventListener("click", async (ev) => {
@@ -317,10 +322,18 @@ function renderTasks(tasks) {
   });
 }
 
+function formatDateTimeLocal(unixSec) {
+  if (!unixSec) return "未设置";
+  const d = new Date(unixSec * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function taskCardHtml(t) {
   const id = escapeHtml(t.id);
   const name = escapeHtml(t.name);
   const enabledChecked = t.enabled ? "checked" : "";
+  const dtLocal = formatDateTimeLocal(t.expiresAt);
 
   return `
   <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-4" data-task-card="1" data-task-id="${id}">
@@ -329,6 +342,7 @@ function taskCardHtml(t) {
         <div class="flex items-center gap-2">
           <div class="text-xs font-semibold text-slate-600">任务</div>
           <div class="text-[11px] font-mono text-slate-400">${id}</div>
+          <div id="countdown-${id}" class="text-xs font-medium px-2 py-0.5 rounded ml-2 hidden"></div>
         </div>
         <input class="input" data-field="name" value="${name}" placeholder="任务名称" />
         <label class="toggle-card" style="padding: 0.75rem 0.9rem;" title="启用后，上游信号到来会执行该任务">
@@ -400,9 +414,26 @@ function taskCardHtml(t) {
         <input type="number" min="0" class="input" data-field="skipSignals" value="${t.skipSignals || 0}" />
       </div>
       <div class="field">
-        <label class="field-label mb-1">代理 (httpProxyUrl) <span class="field-tag field-tag-muted">可选</span></label>
-        <input class="input" data-field="httpProxyUrl" value="${escapeHtml(t.httpProxyUrl)}" placeholder="http://127.0.0.1:7890" />
+        <label class="field-label mb-1">Cookie 过期时间提醒 <span class="field-tag field-tag-muted">可选</span></label>
+        <div class="flex items-center gap-2 mt-1">
+          <div class="flex-1 flex items-center px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono text-slate-600">
+            <svg class="w-3.5 h-3.5 text-slate-400 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span id="expires-display-${id}">${dtLocal}</span>
+          </div>
+          <input type="hidden" data-field="expiresAt" value="${t.expiresAt || 0}" />
+          <div class="inline-flex rounded-md shadow-sm">
+            <button type="button" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-l-md hover:bg-slate-50 focus:z-10 focus:ring-1 focus:ring-slate-300" onclick="setExpiresDays('${id}', 1)">+1d</button>
+            <button type="button" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border-t border-b border-slate-200 hover:bg-slate-50 focus:z-10 focus:ring-1 focus:ring-slate-300 -ml-px" onclick="setExpiresDays('${id}', 3)">+3d</button>
+            <button type="button" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-r-md hover:bg-slate-50 focus:z-10 focus:ring-1 focus:ring-slate-300 -ml-px" onclick="setExpiresDays('${id}', 7)">+7d</button>
+          </div>
+          <button type="button" class="btn-ghost text-xs px-2.5 py-1.5 text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onclick="setExpiresDays('${id}', 0)">清空</button>
+        </div>
       </div>
+    </div>
+
+    <div class="mt-3">
+      <label class="field-label mb-1">代理 (httpProxyUrl) <span class="field-tag field-tag-muted">可选</span></label>
+      <input class="input" data-field="httpProxyUrl" value="${escapeHtml(t.httpProxyUrl)}" placeholder="http://127.0.0.1:7890" />
     </div>
 
     <div class="mt-3">
@@ -427,12 +458,19 @@ function collectTasksFromDom() {
       const el = card.querySelector(`[data-field="${field}"]`);
       return !!(el && el.checked);
     };
+    
+    let expiresSec = 0;
+    const expVal = get("expiresAt");
+    if (expVal) {
+      expiresSec = Number(expVal) || 0;
+    }
 
     tasks.push({
       id: taskId,
       name: String(get("name") || "").trim() || taskId,
       enabled: getChecked("enabled"),
       skipSignals: Number(get("skipSignals") || 0) || 0,
+      expiresAt: expiresSec,
       allowedSymbols: String(get("allowedSymbols") || "").trim(),
       httpProxyUrl: String(get("httpProxyUrl") || "").trim(),
       apiUrl: String(get("apiUrl") || "").trim(),
@@ -520,7 +558,96 @@ function parseCurl(curlStr) {
   return result;
 }
 
-window.promptImportCurl = promptImportCurl;
+function setExpiresDays(taskId, days) {
+  const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
+  if (!card) return;
+  const input = card.querySelector(`[data-field="expiresAt"]`);
+  const display = document.getElementById(`expires-display-${taskId}`);
+  if (!input || !display) return;
+
+  let newExpires = 0;
+  if (days > 0) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    let currentExpires = Number(input.value) || 0;
+    
+    // 如果当前没有设置，或者已经过期，则以当前时间为基准累加
+    if (currentExpires < nowSec) {
+      currentExpires = nowSec;
+    }
+    
+    newExpires = currentExpires + (days * 24 * 3600);
+  }
+
+  input.value = newExpires;
+  display.textContent = formatDateTimeLocal(newExpires);
+
+  // Update state task so interval works immediately
+  const t = stateTasks.find(x => x.id === taskId);
+  if (t) t.expiresAt = newExpires;
+  
+  updateCountdown(taskId, null, newExpires);
+}
+
+window.setExpiresDays = setExpiresDays;
+
+let countdownInterval = null;
+
+function initCountdowns() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+  }
+  countdownInterval = setInterval(() => {
+    stateTasks.forEach(task => {
+      updateCountdown(task.id, null, task.expiresAt);
+    });
+  }, 1000);
+}
+
+function updateCountdown(taskId, dtLocalStr, timestamp) {
+  const el = document.getElementById(`countdown-${taskId}`);
+  if (!el) return;
+
+  let expiresSec = timestamp || 0;
+  if (!expiresSec) {
+    el.classList.add("hidden");
+    return;
+  }
+
+  el.classList.remove("hidden");
+  const now = Math.floor(Date.now() / 1000);
+  const diff = expiresSec - now;
+
+  // Clear previous colors
+  el.classList.remove("bg-slate-100", "text-slate-600", "bg-yellow-100", "text-yellow-700", "bg-red-100", "text-red-600", "animate-pulse");
+
+  if (diff <= 0) {
+    el.textContent = "已过期";
+    el.classList.add("bg-red-100", "text-red-600", "animate-pulse");
+  } else {
+    const h = Math.floor(diff / 3600);
+    const m = Math.floor((diff % 3600) / 60);
+    const s = diff % 60;
+    
+    if (h > 24) {
+      const d = Math.floor(h / 24);
+      el.textContent = `剩余 ${d}天 ${h%24}时`;
+      el.classList.add("bg-slate-100", "text-slate-600");
+    } else if (h >= 1) {
+      el.textContent = `剩余 ${h}时 ${m}分`;
+      el.classList.add("bg-slate-100", "text-slate-600");
+    } else {
+      el.textContent = `剩余 ${m}分 ${s}秒`;
+      el.classList.add("bg-yellow-100", "text-yellow-700");
+      if (diff < 300) { // Less than 5 minutes
+        el.classList.replace("bg-yellow-100", "bg-red-100");
+        el.classList.replace("text-yellow-700", "text-red-600");
+        el.classList.add("animate-pulse");
+      }
+    }
+  }
+}
+
+window.updateCountdown = updateCountdown;
 
 
 function randomId(prefix) {
