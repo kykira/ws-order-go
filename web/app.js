@@ -472,27 +472,44 @@ function promptImportCurl(taskId) {
 
 function parseCurl(curlStr) {
   const result = { method: "GET", url: "", headers: "", body: "" };
+  // Replace line continuations
   let str = curlStr.replace(/\\\r?\n/g, ' ');
 
+  // Extract URL
   const urlMatch = str.match(/https?:\/\/[^\s'"]+/i);
   if (urlMatch) {
     result.url = urlMatch[0].replace(/[`]/g, '');
   }
 
+  // Extract Method
   const methodMatch = str.match(/(?:-X|--request)\s+['"]?([A-Za-z]+)['"]?/);
   if (methodMatch) {
     result.method = methodMatch[1].toUpperCase();
   }
 
-  const headerRegex = /(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/gi;
   let headers = [];
+  
+  // Extract Headers (-H, --header)
+  const headerRegex = /(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/gi;
   let match;
   while ((match = headerRegex.exec(str)) !== null) {
     let h = match[2] || match[3] || "";
     headers.push(h.replace(/`/g, '').trim());
   }
+
+  // Extract Cookies (-b, --cookie) and append as Header
+  const cookieRegex = /(?:-b|--cookie)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/gi;
+  while ((match = cookieRegex.exec(str)) !== null) {
+    let c = match[2] || match[3] || "";
+    c = c.replace(/`/g, '').trim();
+    if (c) {
+      headers.push(`Cookie: ${c}`);
+    }
+  }
+
   result.headers = headers.join('\n');
 
+  // Extract Body (-d, --data, --data-raw, --data-binary)
   const bodyRegex = /(?:-d|--data|--data-raw|--data-binary)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/i;
   const bodyMatch = str.match(bodyRegex);
   if (bodyMatch) {

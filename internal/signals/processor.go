@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"wsordergo/internal/config"
-	"wsordergo/internal/logs"
-	"wsordergo/internal/order"
+	"github.com/kykira/ws-order-go/internal/config"
+	"github.com/kykira/ws-order-go/internal/logs"
+	"github.com/kykira/ws-order-go/internal/order"
 )
 
 type Signal struct {

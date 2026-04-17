@@ -11,9 +11,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"wsordergo/internal/config"
-	"wsordergo/internal/logs"
-	"wsordergo/internal/signals"
+	"github.com/kykira/ws-order-go/internal/config"
+	"github.com/kykira/ws-order-go/internal/logs"
+	"github.com/kykira/ws-order-go/internal/signals"
 )
 
 type Client struct {
@@ -173,11 +173,11 @@ func (c *Client) readLoop(conn *websocket.Conn) error {
 				c.mu.Lock()
 				currentConn := c.conn
 				c.mu.Unlock()
-				
+
 				if currentConn != conn {
 					return
 				}
-				
+
 				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(10*time.Second)); err != nil {
 					return
 				}

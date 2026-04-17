@@ -1,0 +1,70 @@
+[2026/04/16 14:30:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 14:40:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 14:45:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 14:50:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 14:55:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 15:00:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 15:05:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 15:40:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 15:45:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 15:47:00] [INFO] [signal] source=upstream orderID=10336769993060 task=[New Task] action=buy amount= unit=
+[2026/04/16 15:47:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 15:47:05] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044683984373420032","code":0,"message":"下单成功","success":true}
+[2026/04/16 15:48:00] [INFO] [signal] source=upstream orderID=10336763140891 task=[New Task] action=buy amount= unit=
+[2026/04/16 15:48:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 15:48:01] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044684221729112064","code":0,"message":"下单成功","success":true}
+[2026/04/16 15:49:00] [INFO] [signal] source=upstream orderID=10336782559023 task=[New Task] action=buy amount= unit=
+[2026/04/16 15:49:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 15:49:01] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044684474406588416","code":0,"message":"下单成功","success":true}
+[2026/04/16 15:50:00] [INFO] [signal] source=upstream orderID=10336787710888 task=[New Task] action=buy amount= unit=
+[2026/04/16 15:50:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 15:50:01] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044684724718436352","code":0,"message":"下单成功","success":true}
+[2026/04/16 15:50:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 15:51:00] [INFO] [signal] source=upstream orderID=10336782559023 task=[New Task] action=buy amount= unit=
+[2026/04/16 15:51:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 15:51:01] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044684976313778176","code":0,"message":"下单成功","success":true}
+[2026/04/16 15:55:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:00:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:05:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:10:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:15:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:18:01] [INFO] [signal] source=upstream orderID=10336937917798 task=[New Task] action=buy amount= unit=
+[2026/04/16 16:18:01] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 16:18:03] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044691777012793344","code":0,"message":"下单成功","success":true}
+[2026/04/16 16:19:00] [INFO] [signal] source=upstream orderID=10336957071839 task=[New Task] action=buy amount= unit=
+[2026/04/16 16:19:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 16:19:03] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044692028993966080","code":0,"message":"下单成功","success":true}
+[2026/04/16 16:20:00] [INFO] [signal] source=upstream orderID=10336962593939 task=[New Task] action=buy amount= unit=
+[2026/04/16 16:20:00] [INFO] [order] task=[New Task] START POST https://api.hibt0.com/option/option-order/place?v=fToPCpAby6jwK3ZsUx7TVCYV7zT2sBquJYSx52MTDdA%3D
+Body: amount=3&direction=1&symbol=btc_usdt&timeUnit=30&langCode=zh_CN
+Proxy: 
+[2026/04/16 16:20:02] [INFO] [order] task=[New Task] FINISH status=200
+Response: {"data":"CO2044692276504039424","code":0,"message":"下单成功","success":true}
+[2026/04/16 16:20:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:25:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:30:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:35:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:40:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:45:30] [INFO] [signal] 上游心跳保活 (ping)
+[2026/04/16 16:50:30] [INFO] [signal] 上游心跳保活 (ping)

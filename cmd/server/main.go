@@ -12,12 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"wsordergo/internal/config"
-	"wsordergo/internal/logs"
-	"wsordergo/internal/order"
-	"wsordergo/internal/signals"
-	"wsordergo/internal/wsclient"
-	"wsordergo/internal/wsserver"
+	"github.com/kykira/ws-order-go/internal/config"
+	"github.com/kykira/ws-order-go/internal/logs"
+	"github.com/kykira/ws-order-go/internal/order"
+	"github.com/kykira/ws-order-go/internal/signals"
+	"github.com/kykira/ws-order-go/internal/wsclient"
+	"github.com/kykira/ws-order-go/internal/wsserver"
 )
 
 func main() {

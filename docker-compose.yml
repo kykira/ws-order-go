@@ -2,8 +2,8 @@ version: '3.3'
 
 services:
   wsorder:
-    image: ghcr.io/kykira/wsordergo:latest
-    container_name: wsordergo
+    image: ghcr.io/kykira/ws-order-go:latest
+    container_name: ws-order-go
     restart: unless-stopped
     ports:
       - "9946:9946"

@@ -8,8 +8,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"wsordergo/internal/logs"
-	"wsordergo/internal/signals"
+	"github.com/kykira/ws-order-go/internal/logs"
+	"github.com/kykira/ws-order-go/internal/signals"
 )
 
 type Server struct {

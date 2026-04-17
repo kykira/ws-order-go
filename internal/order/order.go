@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"wsordergo/internal/config"
-	"wsordergo/internal/logs"
+	"github.com/kykira/ws-order-go/internal/config"
+	"github.com/kykira/ws-order-go/internal/logs"
 )
 
 type Client struct {

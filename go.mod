@@ -1,4 +1,4 @@
-module wsordergo
+module github.com/kykira/ws-order-go
 
 go 1.21
 
