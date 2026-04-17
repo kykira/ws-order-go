@@ -164,13 +164,7 @@ function initActions() {
       renderTasks(stateTasks);
     });
   }
-  const btnAddApp = document.getElementById("btn-add-task-binance-app");
-  if (btnAddApp) {
-    btnAddApp.addEventListener("click", () => {
-      stateTasks.push(buildBinanceAppTask());
-      renderTasks(stateTasks);
-    });
-  }
+
 }
 
 async function updateWSStatus() {
@@ -182,11 +176,7 @@ async function updateWSStatus() {
     if (!span) return;
     const connected = !!status.connected;
     span.textContent = connected ? "已连接" : "未连接";
-    el.className =
-      "mt-1 inline-flex items-center px-2 py-0.5 rounded-full text-xs " +
-      (connected
-        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-        : "bg-slate-100 text-slate-600 border border-slate-200");
+    el.className = "status-badge " + (connected ? "status-on" : "status-off");
   } catch (err) {
     console.error("updateWSStatus error", err);
   }
@@ -262,19 +252,13 @@ function buildDefaultTask() {
   });
 }
 
-function buildBinanceAppTask() {
-  const t = buildDefaultTask();
-  t.name = "Binance App Task";
-  t.headers = "Content-Type: application/json\nclienttype: android\nx-token: ";
-  return t;
-}
 
 function renderTasks(tasks) {
   const container = document.getElementById("tasks-container");
   if (!container) return;
   if (!Array.isArray(tasks) || tasks.length === 0) {
     container.innerHTML =
-      '<div class="rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-3 py-2 text-xs text-slate-500">暂无任务，请点击“添加任务”。</div>';
+      '<div class="card text-center text-xs text-gray-400 py-6">暂无任务，点击上方"+ 添加任务"。</div>';
     return;
   }
 
@@ -336,41 +320,33 @@ function taskCardHtml(t) {
   const dtLocal = formatDateTimeLocal(t.expiresAt);
 
   return `
-  <div class="rounded-xl border border-slate-200 bg-white p-4 space-y-4" data-task-card="1" data-task-id="${id}">
-    <div class="flex items-start justify-between gap-3">
-      <div class="flex-1 space-y-2">
-        <div class="flex items-center gap-2">
-          <div class="text-xs font-semibold text-slate-600">任务</div>
-          <div class="text-[11px] font-mono text-slate-400">${id}</div>
-          <div id="countdown-${id}" class="text-xs font-medium px-2 py-0.5 rounded ml-2 hidden"></div>
-        </div>
-        <input class="input" data-field="name" value="${name}" placeholder="任务名称" />
-        <label class="toggle-card" style="padding: 0.75rem 0.9rem;" title="启用后，上游信号到来会执行该任务">
-          <div>
-            <div class="field-label">启用任务</div>
-            <div class="field-hint">上游 WS 信号到来时会触发所有启用任务。</div>
-          </div>
-          <input type="checkbox" class="toggle-checkbox" data-field="enabled" ${enabledChecked} />
+  <div class="task-card" data-task-card="1" data-task-id="${id}">
+    <!-- Header -->
+    <div class="task-header">
+      <div class="task-meta">
+        <input class="input" style="max-width:12rem" data-field="name" value="${name}" placeholder="任务名称" />
+        <span class="text-[11px] font-mono text-gray-400">${id}</span>
+        <div id="countdown-${id}" class="countdown hidden"></div>
+        <label class="switch-label" title="启用任务">
+          <span class="text-xs text-gray-500">启用</span>
+          <span class="switch">
+            <input type="checkbox" class="switch-input" data-field="enabled" ${enabledChecked} />
+            <span class="switch-track"></span>
+          </span>
         </label>
       </div>
-      <div class="flex flex-col gap-2 w-[11.5rem]">
-        <button type="button" class="btn-primary" data-action="test-buy" data-task-id="${id}">测试 BUY</button>
-        <button type="button" class="btn-ghost" data-action="test-sell" data-task-id="${id}">测试 SELL</button>
-        <button type="button" class="btn-ghost" data-action="delete" data-task-id="${id}">删除任务</button>
+      <div class="task-actions">
+        <button type="button" class="btn btn-primary" data-action="test-buy" data-task-id="${id}">测试 BUY</button>
+        <button type="button" class="btn btn-ghost" data-action="test-sell" data-task-id="${id}">测试 SELL</button>
+        <button type="button" class="btn btn-ghost" onclick="promptImportCurl('${id}')">导入 cURL</button>
+        <button type="button" class="btn btn-danger" data-action="delete" data-task-id="${id}">删除任务</button>
       </div>
     </div>
 
-    <div class="flex items-center justify-between mt-4">
-      <h4 class="text-sm font-semibold text-slate-700">请求配置</h4>
-      <button type="button" class="btn-ghost text-xs py-1 px-2" onclick="promptImportCurl('${id}')">
-        <svg class="w-3 h-3 mr-1 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-        导入 cURL
-      </button>
-    </div>
-
-    <div class="grid gap-4 md:grid-cols-4 mt-3">
-      <div class="md:col-span-1">
-        <label class="field-label mb-1">Method</label>
+    <!-- Request config -->
+    <div class="grid gap-3 mt-1" style="grid-template-columns: 7rem 1fr">
+      <div>
+        <label class="label">Method</label>
         <select class="input" data-field="method">
           <option value="GET" ${t.method === 'GET' ? 'selected' : ''}>GET</option>
           <option value="POST" ${t.method === 'POST' ? 'selected' : ''}>POST</option>
@@ -378,68 +354,65 @@ function taskCardHtml(t) {
           <option value="DELETE" ${t.method === 'DELETE' ? 'selected' : ''}>DELETE</option>
         </select>
       </div>
-      <div class="md:col-span-3">
-        <label class="field-label mb-1">API URL <span class="field-tag">必填</span></label>
+      <div>
+        <label class="label">API URL <span class="tag">必填</span></label>
         <input class="input" data-field="apiUrl" placeholder="https://..." value="${escapeHtml(t.apiUrl)}" />
       </div>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-2 mt-3">
+    <div class="grid gap-3 sm:grid-cols-2 mt-3">
       <div>
-        <label class="field-label mb-1">Headers</label>
-        <p class="field-hint mb-2">一行一个，格式为 Key: Value</p>
-        <textarea rows="6" class="input font-mono text-xs" data-field="headers" placeholder="Content-Type: application/json">${escapeHtml(t.headers)}</textarea>
+        <label class="label">Headers</label>
+        <p class="hint">一行一个 Key: Value</p>
+        <textarea rows="5" class="input" data-field="headers" placeholder="Content-Type: application/json">${escapeHtml(t.headers)}</textarea>
       </div>
       <div>
-        <label class="field-label mb-1">Body</label>
-        <p class="field-hint mb-2">支持变量: {{amount}}, {{unit}}, {{action}}, {{symbol}}, {{tickerType}}</p>
-        <textarea rows="6" class="input font-mono text-xs" data-field="body" placeholder='{"amount": "{{amount}}"}'>${escapeHtml(t.body)}</textarea>
+        <label class="label">Body</label>
+        <p class="hint">变量: {{amount}}, {{unit}}, {{action}}, {{symbol}}, {{tickerType}}</p>
+        <textarea rows="5" class="input" data-field="body" placeholder='{"amount": "{{amount}}"}'>${escapeHtml(t.body)}</textarea>
       </div>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-2 mt-3">
-      <div class="field">
-        <label class="field-label mb-1">当 action=buy 时替换为 <span class="field-tag field-tag-muted">可选</span></label>
-        <input class="input" data-field="valueBuy" value="${escapeHtml(t.valueBuy)}" placeholder="如: 1 或 LONG" />
+    <div class="grid gap-3 sm:grid-cols-2 mt-3">
+      <div>
+        <label class="label">action=buy 替换为 <span class="tag tag-muted">可选</span></label>
+        <input class="input" data-field="valueBuy" value="${escapeHtml(t.valueBuy)}" placeholder="LONG" />
       </div>
-      <div class="field">
-        <label class="field-label mb-1">当 action=sell 时替换为 <span class="field-tag field-tag-muted">可选</span></label>
-        <input class="input" data-field="valueSell" value="${escapeHtml(t.valueSell)}" placeholder="如: 0 或 SHORT" />
+      <div>
+        <label class="label">action=sell 替换为 <span class="tag tag-muted">可选</span></label>
+        <input class="input" data-field="valueSell" value="${escapeHtml(t.valueSell)}" placeholder="SHORT" />
       </div>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-2 mt-3">
-      <div class="field">
-        <label class="field-label mb-1">跳过前 N 次信号</label>
+    <div class="grid gap-3 sm:grid-cols-2 mt-3">
+      <div>
+        <label class="label">跳过前 N 次信号</label>
         <input type="number" min="0" class="input" data-field="skipSignals" value="${t.skipSignals || 0}" />
       </div>
-      <div class="field">
-        <label class="field-label mb-1">Cookie 过期时间提醒 <span class="field-tag field-tag-muted">可选</span></label>
-        <div class="flex items-center gap-2 mt-1">
-          <div class="flex-1 flex items-center px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs font-mono text-slate-600">
-            <svg class="w-3.5 h-3.5 text-slate-400 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-            <span id="expires-display-${id}">${dtLocal}</span>
-          </div>
-          <input type="hidden" data-field="expiresAt" value="${t.expiresAt || 0}" />
-          <div class="inline-flex rounded-md shadow-sm">
-            <button type="button" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-l-md hover:bg-slate-50 focus:z-10 focus:ring-1 focus:ring-slate-300" onclick="setExpiresDays('${id}', 1)">+1d</button>
-            <button type="button" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border-t border-b border-slate-200 hover:bg-slate-50 focus:z-10 focus:ring-1 focus:ring-slate-300 -ml-px" onclick="setExpiresDays('${id}', 3)">+3d</button>
-            <button type="button" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-r-md hover:bg-slate-50 focus:z-10 focus:ring-1 focus:ring-slate-300 -ml-px" onclick="setExpiresDays('${id}', 7)">+7d</button>
-          </div>
-          <button type="button" class="btn-ghost text-xs px-2.5 py-1.5 text-red-500 hover:text-red-600 hover:bg-red-50 ml-1" onclick="setExpiresDays('${id}', 0)">清空</button>
-        </div>
+      <div>
+        <label class="label">代理 <span class="tag tag-muted">可选</span></label>
+        <input class="input" data-field="httpProxyUrl" value="${escapeHtml(t.httpProxyUrl)}" placeholder="http://127.0.0.1:7890" />
       </div>
     </div>
 
-    <div class="mt-3">
-      <label class="field-label mb-1">代理 (httpProxyUrl) <span class="field-tag field-tag-muted">可选</span></label>
-      <input class="input" data-field="httpProxyUrl" value="${escapeHtml(t.httpProxyUrl)}" placeholder="http://127.0.0.1:7890" />
-    </div>
-
-    <div class="mt-3">
-      <label class="field-label mb-1">允许的交易对 (Allowed Symbols) <span class="field-tag field-tag-muted">可选</span></label>
-      <p class="field-hint mb-1">仅当上游信号中的 symbol 匹配时才下单。留空表示允许全部。多个用逗号分隔，如: BTCUSDT,ETHUSDT</p>
-      <input class="input" data-field="allowedSymbols" value="${escapeHtml(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT" />
+    <div class="grid gap-3 sm:grid-cols-2 mt-3">
+      <div>
+        <label class="label">允许交易对 <span class="tag tag-muted">可选</span></label>
+        <input class="input" data-field="allowedSymbols" value="${escapeHtml(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT (留空=全部)" />
+      </div>
+      <div>
+        <label class="label">过期提醒 <span class="tag tag-muted">可选</span></label>
+        <input type="hidden" data-field="expiresAt" value="${t.expiresAt || 0}" />
+        <div class="expires-row">
+          <span class="expires-display" id="expires-display-${id}">${dtLocal}</span>
+          <div class="expires-btns">
+            <button type="button" class="expires-btn" onclick="setExpiresDays('${id}', 1)">+1d</button>
+            <button type="button" class="expires-btn" onclick="setExpiresDays('${id}', 3)">+3d</button>
+            <button type="button" class="expires-btn" onclick="setExpiresDays('${id}', 7)">+7d</button>
+          </div>
+          <button type="button" class="expires-clear" onclick="setExpiresDays('${id}', 0)">清除</button>
+        </div>
+      </div>
     </div>
   </div>
   `;
@@ -603,7 +576,7 @@ function initCountdowns() {
   }, 1000);
 }
 
-function updateCountdown(taskId, dtLocalStr, timestamp) {
+function updateCountdown(taskId, _unused, timestamp) {
   const el = document.getElementById(`countdown-${taskId}`);
   if (!el) return;
 
@@ -617,12 +590,11 @@ function updateCountdown(taskId, dtLocalStr, timestamp) {
   const now = Math.floor(Date.now() / 1000);
   const diff = expiresSec - now;
 
-  // Clear previous colors
-  el.classList.remove("bg-slate-100", "text-slate-600", "bg-yellow-100", "text-yellow-700", "bg-red-100", "text-red-600", "animate-pulse");
+  el.classList.remove("countdown-normal", "countdown-warn", "countdown-danger", "animate-pulse");
 
   if (diff <= 0) {
     el.textContent = "已过期";
-    el.classList.add("bg-red-100", "text-red-600", "animate-pulse");
+    el.classList.add("countdown-danger", "animate-pulse");
   } else {
     const h = Math.floor(diff / 3600);
     const m = Math.floor((diff % 3600) / 60);
@@ -630,17 +602,16 @@ function updateCountdown(taskId, dtLocalStr, timestamp) {
     
     if (h > 24) {
       const d = Math.floor(h / 24);
-      el.textContent = `剩余 ${d}天 ${h%24}时`;
-      el.classList.add("bg-slate-100", "text-slate-600");
+      el.textContent = `${d}天 ${h%24}时`;
+      el.classList.add("countdown-normal");
     } else if (h >= 1) {
-      el.textContent = `剩余 ${h}时 ${m}分`;
-      el.classList.add("bg-slate-100", "text-slate-600");
+      el.textContent = `${h}时 ${m}分`;
+      el.classList.add("countdown-normal");
     } else {
-      el.textContent = `剩余 ${m}分 ${s}秒`;
-      el.classList.add("bg-yellow-100", "text-yellow-700");
-      if (diff < 300) { // Less than 5 minutes
-        el.classList.replace("bg-yellow-100", "bg-red-100");
-        el.classList.replace("text-yellow-700", "text-red-600");
+      el.textContent = `${m}分 ${s}秒`;
+      el.classList.add("countdown-warn");
+      if (diff < 300) {
+        el.classList.replace("countdown-warn", "countdown-danger");
         el.classList.add("animate-pulse");
       }
     }
@@ -662,9 +633,6 @@ function cssEscape(text) {
   return String(text).replace(/"/g, '\\"');
 }
 
-function selectOption(value, current) {
-  return `<option value="${value}" ${value === current ? "selected" : ""}>${value}</option>`;
-}
 
 function setValue(id, value) {
   const el = document.getElementById(id);
@@ -712,7 +680,7 @@ function appendLog(entry) {
   if (!container) return;
 
   const row = document.createElement("div");
-  row.className = "flex gap-2 items-start text-[11px] text-slate-100";
+  row.className = "flex gap-2 items-start text-[11px] leading-relaxed";
 
   const timeStr = entry.time
     ? new Date(entry.time).toLocaleTimeString("zh-CN", { hour12: false })
@@ -724,16 +692,16 @@ function appendLog(entry) {
 
   const colorClass =
     level === "ERROR"
-      ? "text-rose-400"
+      ? "text-red-600"
       : level === "DEBUG"
-      ? "text-sky-300"
-      : "text-emerald-300";
+      ? "text-blue-600"
+      : "text-green-700";
 
   row.innerHTML = `
-    <span class="text-slate-500 shrink-0">${timeStr}</span>
+    <span class="text-gray-400 shrink-0">${timeStr}</span>
     <span class="shrink-0 ${colorClass}">[${level}]</span>
-    <span class="shrink-0 text-slate-400">${escapeHtml(source)}</span>
-    <span class="flex-1 whitespace-pre-wrap break-words">${escapeHtml(msg)}</span>
+    <span class="shrink-0 text-gray-400">${escapeHtml(source)}</span>
+    <span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${escapeHtml(msg)}</span>
   `;
 
   container.appendChild(row);
