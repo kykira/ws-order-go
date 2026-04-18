@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
-	"net/url"
+	"log"
 	"strings"
 	"sync"
-	"time"
 
+	http "github.com/bogdanfinn/fhttp"
+	tls_client "github.com/bogdanfinn/tls-client"
+	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
 )
@@ -18,13 +18,13 @@ import (
 type Client struct {
 	logger      *logs.Logger
 	clientsMu   sync.RWMutex
-	httpClients map[string]*http.Client
+	httpClients map[string]tls_client.HttpClient
 }
 
 func NewClient(logger *logs.Logger) *Client {
 	return &Client{
 		logger:      logger,
-		httpClients: make(map[string]*http.Client),
+		httpClients: make(map[string]tls_client.HttpClient),
 	}
 }
 
@@ -42,13 +42,7 @@ type PlaceOrderRequest struct {
 func (c *Client) ClearCache() {
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
-	// Optionally we could call CloseIdleConnections on each transport before throwing them away
-	for _, client := range c.httpClients {
-		if tr, ok := client.Transport.(*http.Transport); ok {
-			tr.CloseIdleConnections()
-		}
-	}
-	c.httpClients = make(map[string]*http.Client)
+	c.httpClients = make(map[string]tls_client.HttpClient)
 }
 
 func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req PlaceOrderRequest) error {
@@ -83,15 +77,37 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	if method == "" {
 		method = "POST"
 	}
-
 	httpReq, err := http.NewRequestWithContext(ctx, method, urlStr, strings.NewReader(bodyStr))
 	if err != nil {
 		c.logger.Error("order", fmt.Sprintf("create request error: %v", err))
 		return err
 	}
 
+	httpReq.Header = http.Header{
+		"User-Agent":      {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"},
+		"accept":          {"*/*"},
+		"Accept-Encoding": {"gzip, deflate, br, zstd"},
+		"Cache-Control":   {"no-cache"},
+		"Origin":          {"https://www.binance.com"},
+		"Referer":         {"https://www.binance.com/"},
+		"Sec-Fetch-Site":  {"cross-site"},
+		"Sec-Fetch-Mode":  {"cors"},
+		"Sec-Fetch-Dest":  {"empty"},
+		http.HeaderOrderKey: {
+			"User-Agent",
+			"accept",
+			"Accept-Encoding",
+			"Cache-Control",
+			"Origin",
+			"Referer",
+			"Sec-Fetch-Site",
+			"Sec-Fetch-Mode",
+			"Sec-Fetch-Dest",
+		},
+	}
 	// Parse Headers
 	lines := strings.Split(task.Headers, "\n")
+	headerOrder := httpReq.Header[http.HeaderOrderKey]
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -105,8 +121,10 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		v = strings.TrimSpace(v)
 		if k != "" {
 			httpReq.Header.Set(k, v)
+			headerOrder = append(headerOrder, k)
 		}
 	}
+	httpReq.Header[http.HeaderOrderKey] = headerOrder
 
 	tag := ""
 	if req.IsTest {
@@ -140,7 +158,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	return nil
 }
 
-func (c *Client) httpClientForTask(task config.TaskConfig) (*http.Client, error) {
+func (c *Client) httpClientForTask(task config.TaskConfig) (tls_client.HttpClient, error) {
 	c.clientsMu.RLock()
 	client, exists := c.httpClients[task.ID]
 	c.clientsMu.RUnlock()
@@ -155,31 +173,23 @@ func (c *Client) httpClientForTask(task config.TaskConfig) (*http.Client, error)
 		return client, nil
 	}
 
-	// Build a per-task client so each task can use its own proxy.
-	tr := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{
-			Timeout:   8 * time.Second,
-			KeepAlive: 30 * time.Second,
-		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          50,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   8 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
+	// 直接创建客户端
+	jar := tls_client.NewCookieJar()
+	options := []tls_client.HttpClientOption{
+		tls_client.WithTimeoutSeconds(30),
+		tls_client.WithClientProfile(profiles.Chrome_144),
+		tls_client.WithNotFollowRedirects(),
+		tls_client.WithCookieJar(jar),
 	}
 
 	if strings.TrimSpace(task.HTTPProxyURL) != "" {
-		u, err := url.Parse(strings.TrimSpace(task.HTTPProxyURL))
-		if err != nil {
-			return nil, fmt.Errorf("invalid httpProxyUrl: %w", err)
-		}
-		tr.Proxy = http.ProxyURL(u)
+		options = append(options, tls_client.WithProxyUrl(strings.TrimSpace(task.HTTPProxyURL)))
 	}
 
-	newClient := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: tr,
+	newClient, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
+	if err != nil {
+		log.Println(err)
+		return nil, fmt.Errorf("create new http client error: %v", err)
 	}
 
 	c.httpClients[task.ID] = newClient
