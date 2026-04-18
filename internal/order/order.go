@@ -84,7 +84,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	}
 
 	httpReq.Header = http.Header{
-		"User-Agent":      {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"},
+		"User-Agent":      {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
 		"accept":          {"*/*"},
 		"Accept-Encoding": {"gzip, deflate, br, zstd"},
 		"Cache-Control":   {"no-cache"},
