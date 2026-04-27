@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"strings"
 	"sync"
+	"time"
 
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
@@ -139,7 +141,9 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http client error: %v", tag, task.Name, err))
 		return err
 	}
-
+	// 添加 0-5 秒的随机延迟
+	randomDelay := time.Duration(rand.Intn(5000)) * time.Millisecond
+	time.Sleep(randomDelay)
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error: %v", tag, task.Name, err))
@@ -179,6 +183,7 @@ func (c *Client) httpClientForTask(task config.TaskConfig) (tls_client.HttpClien
 		tls_client.WithTimeoutSeconds(30),
 		tls_client.WithClientProfile(profiles.Chrome_144),
 		tls_client.WithNotFollowRedirects(),
+		tls_client.WithInsecureSkipVerify(),
 		tls_client.WithCookieJar(jar),
 	}
 
