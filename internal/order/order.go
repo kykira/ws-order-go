@@ -141,8 +141,8 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http client error: %v", tag, task.Name, err))
 		return err
 	}
-	// 添加 0-5 秒的随机延迟
-	randomDelay := time.Duration(rand.Intn(5000)) * time.Millisecond
+	// 添加 0-4 秒的随机延迟
+	randomDelay := time.Duration(rand.Intn(4000)) * time.Millisecond
 	time.Sleep(randomDelay)
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
