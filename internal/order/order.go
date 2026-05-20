@@ -3,18 +3,15 @@ package order
 import (
 	"context"
 	"fmt"
-	"io"
-	"log"
-	"math/rand"
-	"strings"
-	"sync"
-	"time"
-
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
+	"io"
+	"log"
+	"strings"
+	"sync"
 )
 
 type Client struct {
@@ -141,9 +138,6 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http client error: %v", tag, task.Name, err))
 		return err
 	}
-	// 添加 0-4 秒的随机延迟
-	randomDelay := time.Duration(rand.Intn(4000)) * time.Millisecond
-	time.Sleep(randomDelay)
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
 		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error: %v", tag, task.Name, err))
