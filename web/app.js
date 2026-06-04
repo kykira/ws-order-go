@@ -160,6 +160,9 @@ function initActions() {
   const btnAdd = document.getElementById("btn-add-task");
   if (btnAdd) {
     btnAdd.addEventListener("click", () => {
+      if (document.querySelector('[data-task-card="1"]')) {
+        stateTasks = collectTasksFromDom();
+      }
       stateTasks.push(buildDefaultTask());
       renderTasks(stateTasks);
     });
@@ -189,7 +192,9 @@ function collectConfigPayload() {
     enabled: isChecked("wsEnabled"),
   };
 
-  const tasks = collectTasksFromDom();
+  const tasks = collectTasksFromDom().map(normalizeTask);
+  validateTasks(tasks);
+  stateTasks = tasks;
   return { upstream, tasks };
 }
 
@@ -223,6 +228,7 @@ function normalizeTask(t) {
         name: String(task.name || "").trim() || "Task",
         enabled: task.enabled !== false,
         skipSignals: Number(task.skipSignals || 0) || 0,
+        timeRanges: compactTimeRanges(task.timeRanges),
         expiresAt: Number(task.expiresAt || 0) || 0,
         allowedSymbols: String(task.allowedSymbols || ""),
         httpProxyUrl: String(task.httpProxyUrl || ""),
@@ -241,6 +247,7 @@ function buildDefaultTask() {
     name: "New Task",
     enabled: true,
     skipSignals: 0,
+    timeRanges: [],
     expiresAt: 0,
     httpProxyUrl: "",
     apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
@@ -275,7 +282,37 @@ function renderTasks(tasks) {
       if (!taskId) return;
 
       if (action === "delete") {
-        stateTasks = stateTasks.filter((x) => x.id !== taskId);
+        stateTasks = collectTasksFromDom().filter((x) => x.id !== taskId);
+        renderTasks(stateTasks);
+        return;
+      }
+
+      if (action === "add-time-range") {
+        stateTasks = collectTasksFromDom();
+        try {
+          updateTaskTimeRanges(taskId, (ranges) => {
+            if (ranges.length >= 4) {
+              throw new Error("每个任务最多只能配置 4 个时间段");
+            }
+            return [...ranges, { start: "", end: "" }];
+          });
+        } catch (err) {
+          appendLog({
+            time: new Date().toISOString(),
+            level: "ERROR",
+            source: "ui",
+            message: err.message,
+          });
+          return;
+        }
+        renderTasks(stateTasks);
+        return;
+      }
+
+      if (action === "delete-time-range") {
+        const index = Number(btn.getAttribute("data-index") || -1);
+        stateTasks = collectTasksFromDom();
+        updateTaskTimeRanges(taskId, (ranges) => ranges.filter((_, i) => i !== index));
         renderTasks(stateTasks);
         return;
       }
@@ -300,8 +337,21 @@ function renderTasks(tasks) {
         }
         return;
       }
+    });
+  });
 
+  container.querySelectorAll("[data-time-range-field]").forEach((el) => {
+    el.addEventListener("change", (ev) => {
+      const input = ev.currentTarget;
+      const currentTaskID = input.getAttribute("data-task-id");
+      const index = Number(input.getAttribute("data-index") || -1);
+      const field = input.getAttribute("data-time-range-field");
+      if (!currentTaskID || index < 0 || !field) return;
 
+      stateTasks = collectTasksFromDom();
+      updateTaskTimeRanges(currentTaskID, (ranges) =>
+        ranges.map((item, i) => (i === index ? { ...item, [field]: input.value } : item)),
+      );
     });
   });
 }
@@ -318,6 +368,7 @@ function taskCardHtml(t) {
   const name = escapeHtml(t.name);
   const enabledChecked = t.enabled ? "checked" : "";
   const dtLocal = formatDateTimeLocal(t.expiresAt);
+  const timeRangesHtml = renderTimeRanges(id, t.timeRanges);
 
   return `
   <div class="task-card" data-task-card="1" data-task-id="${id}">
@@ -395,6 +446,15 @@ function taskCardHtml(t) {
       </div>
     </div>
 
+    <div class="mt-3">
+      <label class="label">触发时间段 <span class="tag tag-muted">可选，留空=全天</span></label>
+      <p class="hint">最多 4 段，仅支持整点配置，支持跨午夜，如 22:00-06:00。</p>
+      <div class="time-ranges" data-time-ranges="1" data-task-id="${id}">
+        ${timeRangesHtml}
+      </div>
+      <button type="button" class="btn btn-ghost mt-2" data-action="add-time-range" data-task-id="${id}">+ 添加时间段</button>
+    </div>
+
     <div class="grid gap-3 sm:grid-cols-2 mt-3">
       <div>
         <label class="label">允许交易对 <span class="tag tag-muted">可选</span></label>
@@ -443,6 +503,7 @@ function collectTasksFromDom() {
       name: String(get("name") || "").trim() || taskId,
       enabled: getChecked("enabled"),
       skipSignals: Number(get("skipSignals") || 0) || 0,
+      timeRanges: collectTimeRangesFromCard(card),
       expiresAt: expiresSec,
       allowedSymbols: String(get("allowedSymbols") || "").trim(),
       httpProxyUrl: String(get("httpProxyUrl") || "").trim(),
@@ -455,6 +516,116 @@ function collectTasksFromDom() {
     });
   });
   return tasks;
+}
+
+function normalizeTimeRanges(ranges) {
+  if (!Array.isArray(ranges)) return [];
+  return ranges.map((item) => ({
+    start: String(item?.start || "").trim(),
+    end: String(item?.end || "").trim(),
+  }));
+}
+
+function compactTimeRanges(ranges) {
+  return normalizeTimeRanges(ranges).filter((item) => item.start || item.end);
+}
+
+function renderTimeRanges(taskId, ranges) {
+  const list = normalizeTimeRanges(ranges);
+  if (list.length === 0) {
+    return '<div class="time-range-empty">未配置时间段，默认全天允许触发。</div>';
+  }
+  return list
+    .map((item, index) => `
+      <div class="time-range-row">
+        <select class="input" data-time-range-field="start" data-task-id="${taskId}" data-index="${index}">
+          ${renderHourOptions(item.start)}
+        </select>
+        <span class="time-range-sep">至</span>
+        <select class="input" data-time-range-field="end" data-task-id="${taskId}" data-index="${index}">
+          ${renderHourOptions(item.end)}
+        </select>
+        <button type="button" class="btn btn-danger" data-action="delete-time-range" data-task-id="${taskId}" data-index="${index}">删除</button>
+      </div>
+    `)
+    .join("");
+}
+
+function renderHourOptions(selectedValue) {
+  const normalizedValue = String(selectedValue || "").trim();
+  const options = ['<option value="">请选择</option>'];
+  for (let hour = 0; hour < 24; hour += 1) {
+    const value = `${String(hour).padStart(2, "0")}:00`;
+    const selected = value === normalizedValue ? "selected" : "";
+    options.push(`<option value="${value}" ${selected}>${value}</option>`);
+  }
+  return options.join("");
+}
+
+function collectTimeRangesFromCard(card) {
+  const rows = card.querySelectorAll("[data-time-range-field='start']");
+  const ranges = [];
+  rows.forEach((startInput) => {
+    const index = startInput.getAttribute("data-index");
+    const endInput = card.querySelector(`[data-time-range-field="end"][data-index="${cssEscape(index)}"]`);
+    ranges.push({
+      start: String(startInput.value || "").trim(),
+      end: String(endInput?.value || "").trim(),
+    });
+  });
+  return normalizeTimeRanges(ranges);
+}
+
+function updateTaskTimeRanges(taskId, updater) {
+  const task = stateTasks.find((item) => item.id === taskId);
+  if (!task) return;
+  const nextRanges = updater(normalizeTimeRanges(task.timeRanges));
+  task.timeRanges = normalizeTimeRanges(nextRanges);
+}
+
+function validateTasks(tasks) {
+  tasks.forEach((task) => {
+    if (!task.apiUrl) {
+      throw new Error(`任务[${task.name}] 的 API URL 不能为空`);
+    }
+    validateTimeRanges(task);
+  });
+}
+
+function validateTimeRanges(task) {
+  const ranges = compactTimeRanges(task.timeRanges);
+  if (ranges.length > 4) {
+    throw new Error(`任务[${task.name}] 最多只能配置 4 个时间段`);
+  }
+
+  ranges.forEach((range, index) => {
+    const label = `任务[${task.name}] 时间段#${index + 1}`;
+    if (!range.start || !range.end) {
+      throw new Error(`${label} 必须同时填写开始和结束时间`);
+    }
+
+    const startMinute = parseMinuteOfDay(range.start, label);
+    const endMinute = parseMinuteOfDay(range.end, label);
+    if (startMinute === endMinute) {
+      throw new Error(`${label} 的开始和结束时间不能相同`);
+    }
+  });
+}
+
+function parseMinuteOfDay(value, label) {
+  if (!/^\d{2}:\d{2}$/.test(value)) {
+    throw new Error(`${label} 必须使用 HH:00 格式`);
+  }
+  const [hourStr, minuteStr] = value.split(":");
+  const hour = Number(hourStr);
+  const minute = Number(minuteStr);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    throw new Error(`${label} 时间格式非法`);
+  }
+  if (minute !== 0) {
+    throw new Error(`${label} 只支持整点配置`);
+  }
+  return hour * 60 + minute;
 }
 
 function promptImportCurl(taskId) {

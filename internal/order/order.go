@@ -3,15 +3,16 @@ package order
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
+	"strings"
+	"sync"
+
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
 	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
-	"io"
-	"log"
-	"strings"
-	"sync"
 )
 
 type Client struct {
@@ -85,6 +86,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	httpReq.Header = http.Header{
 		"User-Agent":      {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
 		"accept":          {"*/*"},
+		"Accept-Language": {"zh-CN,zh;q=0.9,en;q=0.8"},
 		"Accept-Encoding": {"gzip, deflate, br, zstd"},
 		"Cache-Control":   {"no-cache"},
 		"Origin":          {"https://www.binance.com"},

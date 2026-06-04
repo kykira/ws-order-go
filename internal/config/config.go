@@ -19,19 +19,20 @@ type UpstreamConfig struct {
 }
 
 type TaskConfig struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Enabled        bool   `json:"enabled"`
-	SkipSignals    int    `json:"skipSignals"`
-	AllowedSymbols string `json:"allowedSymbols"` // e.g. "BTCUSDT,ETHUSDT" or empty for all
-	ExpiresAt      int64  `json:"expiresAt"`      // Unix timestamp (seconds) for cookie/token expiration
-	HTTPProxyURL   string `json:"httpProxyUrl"`
-	APIUrl         string `json:"apiUrl"`
-	Method         string `json:"method"`
-	Headers        string `json:"headers"`
-	Body           string `json:"body"`
-	ValueBuy       string `json:"valueBuy"`
-	ValueSell      string `json:"valueSell"`
+	ID             string      `json:"id"`
+	Name           string      `json:"name"`
+	Enabled        bool        `json:"enabled"`
+	SkipSignals    int         `json:"skipSignals"`
+	TimeRanges     []TimeRange `json:"timeRanges,omitempty"`
+	AllowedSymbols string      `json:"allowedSymbols"` // e.g. "BTCUSDT,ETHUSDT" or empty for all
+	ExpiresAt      int64       `json:"expiresAt"`      // Unix timestamp (seconds) for cookie/token expiration
+	HTTPProxyURL   string      `json:"httpProxyUrl"`
+	APIUrl         string      `json:"apiUrl"`
+	Method         string      `json:"method"`
+	Headers        string      `json:"headers"`
+	Body           string      `json:"body"`
+	ValueBuy       string      `json:"valueBuy"`
+	ValueSell      string      `json:"valueSell"`
 }
 
 type Config struct {
@@ -81,17 +82,8 @@ func LoadManager(path string) (*Manager, error) {
 		return nil, err
 	}
 
-	// Ensure defaults
-	for i := range cfg.Tasks {
-		if cfg.Tasks[i].ID == "" {
-			cfg.Tasks[i].ID = fmt.Sprintf("task-%d", i+1)
-		}
-		if cfg.Tasks[i].Name == "" {
-			cfg.Tasks[i].Name = cfg.Tasks[i].ID
-		}
-		if cfg.Tasks[i].Method == "" {
-			cfg.Tasks[i].Method = "POST"
-		}
+	if err := PrepareTasks(cfg.Tasks); err != nil {
+		return nil, err
 	}
 
 	applyEnvOverrides(&cfg)

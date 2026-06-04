@@ -48,9 +48,6 @@ func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.C
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑（仅建议对上游 WS 启用）。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	cfg := p.cfg.Get()
 
 	action := strings.ToLower(strings.TrimSpace(sig.Action))
@@ -78,6 +75,17 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			continue
 		}
 
+		currentTime := time.Now()
+		allowedNow, matchedRange, err := config.IsTimeAllowed(task.TimeRanges, currentTime)
+		if err != nil {
+			p.logger.Error("signal", fmt.Sprintf("task=[%s] invalid time ranges, ignore signal: %v", task.Name, err))
+			continue
+		}
+		if !allowedNow {
+			p.logger.Info("signal", fmt.Sprintf("task=[%s] ignored by time ranges current=%s ranges=%s", task.Name, currentTime.Format("15:04"), config.FormatTimeRanges(task.TimeRanges)))
+			continue
+		}
+
 		// Filter by AllowedSymbols
 		if strings.TrimSpace(task.AllowedSymbols) != "" {
 			allowed := false
@@ -95,7 +103,8 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		}
 
 		if applySkip && task.SkipSignals > 0 {
-			now := time.Now()
+			p.mu.Lock()
+			now := currentTime
 			// Reset if 30 minutes have passed since the first skipped signal for this task
 			if start, ok := p.skipStartTime[task.ID]; ok && now.Sub(start) > 30*time.Minute {
 				p.seenSkip[task.ID] = 0
@@ -110,11 +119,13 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 				}
 				p.seenSkip[task.ID]++
 				p.logger.Info("signal", fmt.Sprintf("skip %d/%d from %s for task=[%s]", p.seenSkip[task.ID], task.SkipSignals, source, task.Name))
+				p.mu.Unlock()
 				continue
 			}
+			p.mu.Unlock()
 		}
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v task=[%s] action=%s amount=%s unit=%s", source, sig.OrderID, task.Name, action, amount, unit))
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v task=[%s] action=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, task.Name, action, amount, unit, matchedRange))
 
 		// Execute PlaceOrder asynchronously to avoid blocking other tasks
 		go func(t config.TaskConfig, req order.PlaceOrderRequest) {

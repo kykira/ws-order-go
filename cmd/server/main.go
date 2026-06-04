@@ -107,6 +107,12 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 			if payload.Tasks == nil {
 				payload.Tasks = []config.TaskConfig{}
 			}
+			if err := config.PrepareTasks(payload.Tasks); err != nil {
+				logger.Error("config", fmt.Sprintf("reject invalid config payload: %v", err))
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
+				return
+			}
 			if err := cfgMgr.Update(func(c *config.Config) {
 				c.Upstream = payload.Upstream
 				c.Tasks = payload.Tasks

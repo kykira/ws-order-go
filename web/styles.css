@@ -286,6 +286,33 @@ textarea.input {
   gap: 0.75rem;
 }
 
+/* === Time ranges === */
+.time-ranges {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.time-range-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.time-range-sep {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.time-range-empty {
+  padding: 0.625rem 0.75rem;
+  border: 1px dashed #d1d5db;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+  background: #f9fafb;
+}
+
 /* === Countdown === */
 .countdown {
   font-size: 0.6875rem;
@@ -377,5 +404,9 @@ textarea.input {
 
   .expires-row {
     flex-wrap: wrap;
+  }
+
+  .time-range-row {
+    grid-template-columns: 1fr;
   }
 }
