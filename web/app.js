@@ -1,617 +1,305 @@
-document.addEventListener("DOMContentLoaded", () => {
-  initConfig();
-  initActions();
-  initLogs();
-});
+document.addEventListener("DOMContentLoaded", () => { initConfig(); initActions(); initLogs(); });
 
 let stateTasks = [];
 
-async function apiGet(path) {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`GET ${path} ${res.status}`);
-  return res.json();
+async function apiGet(p) { const r = await fetch(p); if (!r.ok) throw new Error(r.status); return r.json(); }
+async function apiPost(p, b) {
+  const r = await fetch(p, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(b??{}) });
+  if (!r.ok) { const m = await r.text().catch(()=>""); throw new Error(`${r.status} ${m}`); }
+  try { return await r.json(); } catch { return {}; }
 }
 
-async function apiPost(path, body) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  if (!res.ok) {
-    let msg = await res.text().catch(() => "");
-    throw new Error(`POST ${path} ${res.status} ${msg}`);
-  }
-  try { return await res.json(); } catch { return {}; }
-}
+function $(id) { return document.getElementById(id); }
 
-// ── Init ──────────────────────────────────────────
+// ── Init ──
 
-function initConfig() {
-  loadConfig().catch(err => console.error(err));
-  updateWSStatus();
-  setInterval(updateWSStatus, 3000);
-}
+function initConfig() { loadConfig().catch(console.error); updateWSStatus(); setInterval(updateWSStatus, 3000); }
 
 async function loadConfig() {
-  const cfg = await apiGet("/api/config");
-
-  // WS Server
-  const ws = cfg.wsServer || {};
-  setValue("wsServerPath", ws.path || "/ws");
-  setValue("wsServerKey", ws.key || "");
-  setChecked("wsServerEnabled", ws.enabled !== false);
-  setChecked("wsServerApplySkip", !!ws.applySkip);
+  const c = await apiGet("/api/config");
+  const ws = c.wsServer || {};
+  setVal("wsServerPath", ws.path||"/ws");
+  setVal("wsServerKey", ws.key||"");
+  setChk("wsServerEnabled", ws.enabled!==false);
+  setChk("wsServerApplySkip", !!ws.applySkip);
   updateWSEndpoint();
-
-  // Upstream (legacy)
-  setValue("wsUrl", cfg.upstream?.wsUrl || "");
-  setValue("wsKey", cfg.upstream?.wsKey || "");
-  setChecked("wsEnabled", !!cfg.upstream?.enabled);
-
-  // Dispatch
-  const sel = document.getElementById("dispatchMode");
-  if (sel) sel.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
-
-  stateTasks = normalizeTasks(cfg);
+  const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
+  stateTasks = normalizeTasks(c);
   renderTasks(stateTasks);
 }
 
 function initActions() {
-  document.getElementById("btn-save-config")?.addEventListener("click", async () => {
+  $("btn-save-config")?.addEventListener("click", async () => {
+    try { await apiPost("/api/config", collectPayload()); log("配置已保存"); await loadConfig(); }
+    catch(e) { log("保存失败: "+e.message, "ERROR"); }
+  });
+  $("btn-import-json")?.addEventListener("click", () => {
+    const s = prompt("粘贴 config.json:"); if (!s) return;
     try {
-      const payload = collectConfigPayload();
-      await apiPost("/api/config", payload);
-      appendLog({ time: new Date().toISOString(), level: "INFO", source: "ui", message: "配置已保存" });
-      await loadConfig();
-    } catch (err) {
-      appendLog({ time: new Date().toISOString(), level: "ERROR", source: "ui", message: `保存失败: ${err.message}` });
-    }
+      const c = JSON.parse(s); const ws = c.wsServer||{};
+      setVal("wsServerPath", ws.path||"/ws"); setVal("wsServerKey", ws.key||"");
+      setChk("wsServerEnabled", ws.enabled!==false); setChk("wsServerApplySkip", !!ws.applySkip); updateWSEndpoint();
+      const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
+      stateTasks = normalizeTasks(c); renderTasks(stateTasks); log("JSON 已导入");
+    } catch(e) { alert("解析失败: "+e.message); }
   });
-
-  document.getElementById("btn-import-json")?.addEventListener("click", () => {
-    const s = prompt("粘贴 config.json 内容：");
-    if (!s) return;
-    try {
-      const cfg = JSON.parse(s);
-      const ws = cfg.wsServer || {};
-      setValue("wsServerPath", ws.path || "/ws");
-      setValue("wsServerKey", ws.key || "");
-      setChecked("wsServerEnabled", ws.enabled !== false);
-      setChecked("wsServerApplySkip", !!ws.applySkip);
-      updateWSEndpoint();
-      setValue("wsUrl", cfg.upstream?.wsUrl || "");
-      setValue("wsKey", cfg.upstream?.wsKey || "");
-      setChecked("wsEnabled", !!cfg.upstream?.enabled);
-      const sel = document.getElementById("dispatchMode");
-      if (sel) sel.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
-      stateTasks = normalizeTasks(cfg);
-      renderTasks(stateTasks);
-      appendLog({ level: "INFO", source: "ui", message: "JSON 已导入（未保存）" });
-    } catch (e) { alert("JSON 解析失败: " + e.message); }
-  });
-
-  document.getElementById("btn-add-task")?.addEventListener("click", () => {
-    stateTasks = collectTasksFromDom();
-    stateTasks.push(buildDefaultTask());
-    renderTasks(stateTasks);
-  });
-
-  // WS Server field listeners
-  document.getElementById("wsServerPath")?.addEventListener("input", updateWSEndpoint);
-  document.getElementById("wsServerKey")?.addEventListener("input", updateWSEndpoint);
+  $("btn-add-task")?.addEventListener("click", () => { stateTasks = collectTasks(); stateTasks.push(defaultTask()); renderTasks(stateTasks); });
+  $("wsServerPath")?.addEventListener("input", updateWSEndpoint);
+  $("wsServerKey")?.addEventListener("input", updateWSEndpoint);
 }
 
-// ── Config collect ───────────────────────────────
+// ── Config ──
 
-function collectConfigPayload() {
-  const upstream = {
-    wsUrl: getValue("wsUrl"), wsKey: getValue("wsKey"), enabled: isChecked("wsEnabled"),
-  };
-  const wsServer = {
-    path: getValue("wsServerPath") || "/ws",
-    key: getValue("wsServerKey") || "",
-    enabled: isChecked("wsServerEnabled"),
-    applySkip: isChecked("wsServerApplySkip"),
-  };
-  const el = document.getElementById("dispatchMode");
-  const dispatch = el ? el.value : "round-robin";
-  const tasks = collectTasksFromDom().map(normalizeTask);
-  validateTasks(tasks);
-  stateTasks = tasks;
+function collectPayload() {
+  const upstream = { wsUrl: "", wsKey: "", enabled: false };
+  const wsServer = { path: getVal("wsServerPath")||"/ws", key: getVal("wsServerKey")||"", enabled: isChk("wsServerEnabled"), applySkip: isChk("wsServerApplySkip") };
+  const dispatch = $("dispatchMode")?.value || "round-robin";
+  const tasks = collectTasks().map(n);
+  validate(tasks); stateTasks = tasks;
   return { upstream, wsServer, dispatch, tasks };
 }
 
-function normalizeTasks(cfg) {
-  const tasks = Array.isArray(cfg?.tasks) ? cfg.tasks : [];
-  if (tasks.length > 0) return tasks.map(normalizeTask);
-  return [normalizeTask({
-    id: "default", name: "Account 1", enabled: true, skipSignals: 0, httpProxyUrl: "",
-    apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
-    method: "POST",
-    headers: "Content-Type: application/json\nclienttype: web",
-    body: '{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}',
-    valueBuy: "LONG", valueSell: "SHORT",
-  })];
+function normalizeTasks(c) {
+  const t = Array.isArray(c?.tasks) ? c.tasks : [];
+  return t.length > 0 ? t.map(n) : [n({ id:"default", name:"Account 1", enabled:true, apiUrl:"https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order", method:"POST", headers:"Content-Type: application/json\nclienttype: web", body:'{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}', valueBuy:"LONG", valueSell:"SHORT" })];
 }
 
-function normalizeTask(t) {
+function n(t) {
   t = t || {};
-  return {
-    id: String(t.id || "").trim() || randomId("acct"),
-    name: String(t.name || "").trim() || "Account",
-    enabled: t.enabled !== false,
-    skipSignals: Number(t.skipSignals || 0) || 0,
-    timeRanges: compactTimeRanges(t.timeRanges),
-    allowedSymbols: String(t.allowedSymbols || ""),
-    expiresAt: Number(t.expiresAt || 0) || 0,
-    httpProxyUrl: String(t.httpProxyUrl || ""),
-    apiUrl: String(t.apiUrl || ""),
-    method: String(t.method || "POST").toUpperCase(),
-    headers: String(t.headers || ""),
-    body: String(t.body || ""),
-    valueBuy: String(t.valueBuy || ""),
-    valueSell: String(t.valueSell || ""),
-  };
+  return { id: String(t.id||"").trim()||rid("acct"), name: String(t.name||"").trim()||"Account", enabled: t.enabled!==false,
+    skipSignals: +t.skipSignals||0, timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
+    expiresAt: +t.expiresAt||0, httpProxyUrl: String(t.httpProxyUrl||""), apiUrl: String(t.apiUrl||""),
+    method: String(t.method||"POST").toUpperCase(), headers: String(t.headers||""), body: String(t.body||""),
+    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||"") };
 }
 
-function buildDefaultTask() {
-  return normalizeTask({
-    id: randomId("acct"), name: "New Account", enabled: true,
-    apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
-    method: "POST",
-    headers: "Content-Type: application/json\nclienttype: web",
-    body: '{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}',
-    valueBuy: "LONG", valueSell: "SHORT",
-  });
+function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:true, apiUrl:"https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order", method:"POST", headers:"Content-Type: application/json\nclienttype: web", body:'{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}', valueBuy:"LONG", valueSell:"SHORT" }); }
+
+// ── Render ──
+
+function renderTasks(ts) {
+  const c = $("tasks-container"); if (!c) return;
+  if (!ts?.length) { c.innerHTML = '<div class="bg-white border rounded-lg p-6 text-center text-xs text-gray-400">暂无账号，点击"+ 账号"添加</div>'; return; }
+  c.innerHTML = ts.map((t,i) => card(t,i+1)).join("\n");
+  initCountdowns(); bind(c);
 }
 
-// ── Render ────────────────────────────────────────
-
-function renderTasks(tasks) {
-  const c = document.getElementById("tasks-container");
-  if (!c) return;
-  if (!Array.isArray(tasks) || tasks.length === 0) {
-    c.innerHTML = '<div class="card text-center text-xs text-gray-400 py-6">暂无账号，点击"+ 账号"添加</div>';
-    return;
-  }
-  c.innerHTML = tasks.map((t, i) => accountCard(t, i + 1)).join("\n");
-  initCountdowns();
-  bindCardEvents(c);
-}
-
-function accountCard(t, index) {
+function card(t, idx) {
   const id = t.id;
-  return `
-  <div class="acct-card" data-task-card="1" data-task-id="${id}">
-    <!-- Header -->
-    <div class="acct-header">
+  return `<div class="bg-white border rounded-lg p-3" data-task-card="1" data-task-id="${id}">
+    <div class="flex items-center justify-between gap-2 pb-2 mb-2 border-b" style="border-color:var(--gl)">
       <div class="flex items-center gap-2 min-w-0">
-        <span class="acct-index">#${index}</span>
-        <input class="input" style="max-width:10rem;font-weight:600" data-field="name" value="${esc(t.name)}" placeholder="账号名称" />
-        <span class="text-[10px] font-mono text-gray-300 truncate hidden sm:inline">${id}</span>
-        <label class="switch-label" title="启用">
-          <span class="switch"><input type="checkbox" class="switch-input" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span>
-        </label>
+        <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
+        <input class="border rounded px-2 py-1 text-xs font-semibold" style="max-width:9rem" data-field="name" value="${esc(t.name)}" />
+        <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>
       <div class="flex items-center gap-1 flex-shrink-0">
-        <button class="btn btn-primary text-[11px]" data-action="test-buy" data-task-id="${id}">BUY</button>
-        <button class="btn btn-ghost text-[11px]" data-action="test-sell" data-task-id="${id}">SELL</button>
-        <button class="btn btn-ghost text-[11px]" onclick="promptImportCurl('${id}')">cURL</button>
-        <button class="btn btn-danger text-[11px]" data-action="delete" data-task-id="${id}">✕</button>
+        <button class="rounded px-2 py-1 text-[11px] font-medium text-white" style="background:var(--g)" data-action="test-buy" data-task-id="${id}">BUY</button>
+        <button class="border rounded px-2 py-1 text-[11px] bg-white" data-action="test-sell" data-task-id="${id}">SELL</button>
+        <button class="border rounded px-2 py-1 text-[11px] bg-white" onclick="promptImportCurl('${id}')">cURL</button>
+        <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete" data-task-id="${id}">✕</button>
       </div>
     </div>
-
-    <!-- Row 1: API URL + Method -->
-    <div class="acct-row">
+    <div class="flex gap-2 items-end">
+      <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">API URL</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." /></div>
+      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">Method</label><select class="border rounded w-full px-2 py-1 text-xs bg-white" data-field="method">${["GET","POST","PUT","DELETE"].map(m=>`<option ${t.method===m?"selected":""}>${m}</option>`).join("")}</select></div>
+      <div style="width:7rem"><label class="block text-[11px] text-gray-500 mb-0.5">代理</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="httpProxyUrl" value="${esc(t.httpProxyUrl)}" placeholder="可选" /></div>
+    </div>
+    <div class="flex gap-2 items-start mt-2">
       <div class="flex-1">
-        <label class="label">API URL</label>
-        <input class="input" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." />
+        <label class="block text-[11px] text-gray-500 mb-0.5">⏰ 有效时间段 <span class="text-gray-400">留空=全天</span></label>
+        <div class="space-y-1" data-time-ranges="1" data-task-id="${id}">${trHtml(id, t.timeRanges)}</div>
+        <button class="border rounded px-2 py-0.5 text-[10px] bg-white mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
       </div>
-      <div style="width:5rem">
-        <label class="label">Method</label>
-        <select class="input" data-field="method">
-          ${["GET","POST","PUT","DELETE"].map(m => `<option ${t.method===m?"selected":""}>${m}</option>`).join("")}
-        </select>
-      </div>
-      <div style="width:8rem">
-        <label class="label">代理</label>
-        <input class="input" data-field="httpProxyUrl" value="${esc(t.httpProxyUrl)}" placeholder="可选" />
+      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Symbol过滤</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT" /></div>
+    </div>
+    <div class="mt-1.5">
+      <span class="text-[11px] text-gray-500 cursor-pointer select-none" onclick="this.nextElementSibling.classList.toggle('hidden')">▸ Headers & Body</span>
+      <div class="hidden grid gap-2 sm:grid-cols-2 mt-1">
+        <div><textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="3" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea></div>
+        <div><textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="3" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea></div>
       </div>
     </div>
-
-    <!-- Row 2: Time Ranges (highlighted) -->
-    <div class="acct-row items-start">
+    <div class="flex gap-2 items-end mt-2">
+      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">buy→</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" /></div>
+      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">sell→</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" /></div>
+      <div style="width:4rem"><label class="block text-[11px] text-gray-500 mb-0.5">跳过</label><input type="number" min="0" class="border rounded w-full px-2 py-1 text-xs" data-field="skipSignals" value="${t.skipSignals||0}" /></div>
       <div class="flex-1">
-        <label class="label">⏰ 有效时间段 <span class="tag tag-muted">留空=全天</span></label>
-        <div class="time-ranges" data-time-ranges="1" data-task-id="${id}">
-          ${renderTimeRanges(id, t.timeRanges)}
-        </div>
-        <button class="btn btn-ghost text-[10px] mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
-      </div>
-      <div style="width:10rem">
-        <label class="label">Symbol过滤</label>
-        <input class="input" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT" />
-      </div>
-    </div>
-
-    <!-- Row 3: Headers + Body (collapsible by default if empty) -->
-    <details class="acct-details" ${t.headers || t.body ? "open" : ""}>
-      <summary class="text-[11px] text-gray-500 cursor-pointer select-none">Headers & Body</summary>
-      <div class="grid gap-2 sm:grid-cols-2 mt-1.5">
-        <div>
-          <label class="label">Headers <span class="tag tag-muted">一行一个</span></label>
-          <textarea class="input" rows="3" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea>
-        </div>
-        <div>
-          <label class="label">Body <span class="tag tag-muted">{{action}} {{amount}} {{unit}} {{symbol}}</span></label>
-          <textarea class="input" rows="3" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea>
-        </div>
-      </div>
-    </details>
-
-    <!-- Row 4: valueBuy/Sell + skip + expires -->
-    <div class="acct-row">
-      <div style="width:6rem">
-        <label class="label">buy→</label>
-        <input class="input" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" />
-      </div>
-      <div style="width:6rem">
-        <label class="label">sell→</label>
-        <input class="input" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" />
-      </div>
-      <div style="width:5rem">
-        <label class="label">跳过N次</label>
-        <input type="number" min="0" class="input" data-field="skipSignals" value="${t.skipSignals||0}" />
-      </div>
-      <div class="flex-1">
-        <label class="label">过期提醒</label>
+        <label class="block text-[11px] text-gray-500 mb-0.5">过期</label>
         <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
-        <div class="expires-row">
-          <span class="expires-display" id="expires-display-${id}">${fmtDT(t.expiresAt)}</span>
-          <div class="expires-btns">
-            <button class="expires-btn" onclick="setExpiresDays('${id}',1)">+1d</button>
-            <button class="expires-btn" onclick="setExpiresDays('${id}',3)">+3d</button>
-            <button class="expires-btn" onclick="setExpiresDays('${id}',7)">+7d</button>
-          </div>
-          <button class="expires-clear" onclick="setExpiresDays('${id}',0)">清除</button>
+        <div class="flex items-center gap-1">
+          <span class="inline-flex items-center h-7 px-2 text-xs font-mono rounded border" style="background:var(--gl);color:var(--gt);border-color:var(--gb);min-width:8rem" id="expires-display-${id}">${fmtDT(t.expiresAt)}</span>
+          <span class="inline-flex border rounded overflow-hidden" style="border-color:var(--gb)">
+            <button class="h-7 px-2 text-xs border-r bg-white hover:bg-green-50" style="border-color:var(--gb);color:var(--gt)" onclick="setExpires('${id}',1)">+1d</button>
+            <button class="h-7 px-2 text-xs border-r bg-white hover:bg-green-50" style="border-color:var(--gb);color:var(--gt)" onclick="setExpires('${id}',3)">+3d</button>
+            <button class="h-7 px-2 text-xs bg-white hover:bg-green-50" style="color:var(--gt)" onclick="setExpires('${id}',7)">+7d</button>
+          </span>
+          <button class="h-7 px-2 text-xs border border-red-200 rounded bg-white text-red-600 hover:bg-red-50" onclick="setExpires('${id}',0)">清除</button>
         </div>
       </div>
     </div>
   </div>`;
 }
 
-function bindCardEvents(container) {
-  container.querySelectorAll("[data-action]").forEach(el => {
-    el.addEventListener("click", async ev => {
-      const btn = ev.currentTarget;
-      const action = btn.getAttribute("data-action");
-      const taskId = btn.getAttribute("data-task-id");
-      if (!taskId) return;
-
-      if (action === "delete") {
-        stateTasks = collectTasksFromDom().filter(x => x.id !== taskId);
-        renderTasks(stateTasks);
-        return;
-      }
-      if (action === "add-time-range") {
-        stateTasks = collectTasksFromDom();
-        try { updateTaskTimeRanges(taskId, r => r.length>=4 ? (()=>{throw new Error("最多4段")})() : [...r,{start:"",end:""}]); }
-        catch(e) { appendLog({level:"ERROR",source:"ui",message:e.message}); return; }
-        renderTasks(stateTasks);
-        return;
-      }
-      if (action === "delete-time-range") {
-        const idx = Number(btn.getAttribute("data-index")||-1);
-        stateTasks = collectTasksFromDom();
-        updateTaskTimeRanges(taskId, r => r.filter((_,i) => i!==idx));
-        renderTasks(stateTasks);
-        return;
-      }
-      if (action === "test-buy" || action === "test-sell") {
-        const act = action === "test-buy" ? "buy" : "sell";
-        try {
-          await apiPost("/api/tasks/test", { taskId, action: act });
-          appendLog({ level:"INFO", source:"ui", message:`测试 ${act} → ${taskId}` });
-        } catch(e) {
-          appendLog({ level:"ERROR", source:"ui", message:`测试失败: ${e.message}` });
-        }
-        return;
-      }
-    });
-  });
-
-  container.querySelectorAll("[data-time-range-field]").forEach(el => {
-    el.addEventListener("change", ev => {
-      const inp = ev.currentTarget;
-      const tid = inp.getAttribute("data-task-id");
-      const idx = Number(inp.getAttribute("data-index")||-1);
-      const field = inp.getAttribute("data-time-range-field");
-      if (!tid || idx<0 || !field) return;
-      stateTasks = collectTasksFromDom();
-      updateTaskTimeRanges(tid, r => r.map((item,i) => i===idx ? {...item,[field]:inp.value} : item));
-    });
-  });
+function trHtml(taskId, ranges) {
+  const list = ntr(ranges);
+  if (!list.length) return '<div class="time-range-empty">全天</div>';
+  return list.map((r,i) => `<div class="flex gap-1 items-center">
+    <select class="border rounded px-1 py-0.5 text-[11px] bg-white flex-1" data-time-range-field="start" data-task-id="${taskId}" data-index="${i}">${hopts(r.start)}</select>
+    <span class="text-[11px] text-gray-400">→</span>
+    <select class="border rounded px-1 py-0.5 text-[11px] bg-white flex-1" data-time-range-field="end" data-task-id="${taskId}" data-index="${i}">${hopts(r.end)}</select>
+    <button class="text-red-500 text-[11px] px-1" data-action="delete-time-range" data-task-id="${taskId}" data-index="${i}">✕</button></div>`).join("");
 }
 
-// ── Time ranges ───────────────────────────────────
+function hopts(sel) { let o='<option value="">--</option>'; for(let h=0;h<24;h++){const v=`${String(h).padStart(2,"0")}:00`;o+=`<option value="${v}" ${v===String(sel||"").trim()?"selected":""}>${v}</option>`;} return o; }
 
-function renderTimeRanges(taskId, ranges) {
-  const list = normalizeTimeRanges(ranges);
-  if (list.length === 0) return '<div class="time-range-empty">全天</div>';
-  return list.map((item, i) => `
-    <div class="time-range-row">
-      <select class="input" data-time-range-field="start" data-task-id="${taskId}" data-index="${i}">${hourOpts(item.start)}</select>
-      <span class="time-range-sep">→</span>
-      <select class="input" data-time-range-field="end" data-task-id="${taskId}" data-index="${i}">${hourOpts(item.end)}</select>
-      <button class="btn btn-danger text-[10px]" data-action="delete-time-range" data-task-id="${taskId}" data-index="${i}">✕</button>
-    </div>`).join("");
+function bind(c) {
+  c.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", async ev => {
+    const b = ev.currentTarget, a = b.getAttribute("data-action"), tid = b.getAttribute("data-task-id");
+    if (!tid) return;
+    if (a==="delete") { stateTasks = collectTasks().filter(x=>x.id!==tid); renderTasks(stateTasks); return; }
+    if (a==="add-time-range") { stateTasks = collectTasks(); try { updTR(tid, r=>r.length>=4?(()=>{throw new Error("最多4段")})():[...r,{start:"",end:""}]); } catch(e) { log(e.message,"ERROR"); return; } renderTasks(stateTasks); return; }
+    if (a==="delete-time-range") { const i=+b.getAttribute("data-index")||0; stateTasks=collectTasks(); updTR(tid, r=>r.filter((_,j)=>j!==i)); renderTasks(stateTasks); return; }
+    if (a==="test-buy"||a==="test-sell") { const act=a==="test-buy"?"buy":"sell"; try { await apiPost("/api/tasks/test",{taskId:tid,action:act}); log(`测试 ${act} → ${tid}`); } catch(e) { log("测试失败: "+e.message,"ERROR"); } }
+  }));
+  c.querySelectorAll("[data-time-range-field]").forEach(el => el.addEventListener("change", ev => {
+    const inp=ev.currentTarget, tid=inp.getAttribute("data-task-id"), idx=+inp.getAttribute("data-index")||0, f=inp.getAttribute("data-time-range-field");
+    if (!tid||!f) return; stateTasks=collectTasks(); updTR(tid, r=>r.map((item,i)=>i===idx?{...item,[f]:inp.value}:item));
+  }));
 }
 
-function hourOpts(sel) {
-  const v = String(sel||"").trim();
-  let o = '<option value="">--</option>';
-  for (let h=0; h<24; h++) {
-    const val = `${String(h).padStart(2,"0")}:00`;
-    o += `<option value="${val}" ${val===v?"selected":""}>${val}</option>`;
-  }
-  return o;
-}
+// ── Time ranges ──
 
-function normalizeTimeRanges(ranges) {
-  if (!Array.isArray(ranges)) return [];
-  return ranges.map(r => ({ start: String(r?.start||"").trim(), end: String(r?.end||"").trim() }));
-}
+function ntr(r) { return Array.isArray(r)?r.map(x=>({start:String(x?.start||"").trim(),end:String(x?.end||"").trim()})):[]; }
+function ctr(r) { return ntr(r).filter(x=>x.start||x.end); }
+function updTR(tid, fn) { const t=stateTasks.find(x=>x.id===tid); if(t) t.timeRanges=ntr(fn(ntr(t.timeRanges))); }
+function colTR(card) { return [...card.querySelectorAll("[data-time-range-field='start']")].map(s=>{const i=s.getAttribute("data-index"),e=card.querySelector(`[data-time-range-field="end"][data-index="${cssEscape(i)}"]`);return{start:String(s.value||"").trim(),end:String(e?.value||"").trim()}}); }
 
-function compactTimeRanges(ranges) {
-  return normalizeTimeRanges(ranges).filter(r => r.start || r.end);
-}
+// ── Collect ──
 
-function collectTimeRangesFromCard(card) {
-  const rows = card.querySelectorAll("[data-time-range-field='start']");
-  const out = [];
-  rows.forEach(s => {
-    const i = s.getAttribute("data-index");
-    const e = card.querySelector(`[data-time-range-field="end"][data-index="${cssEscape(i)}"]`);
-    out.push({ start: String(s.value||"").trim(), end: String(e?.value||"").trim() });
-  });
-  return out;
-}
-
-function updateTaskTimeRanges(taskId, updater) {
-  const t = stateTasks.find(x => x.id === taskId);
-  if (!t) return;
-  t.timeRanges = normalizeTimeRanges(updater(normalizeTimeRanges(t.timeRanges)));
-}
-
-// ── Collect from DOM ──────────────────────────────
-
-function collectTasksFromDom() {
+function collectTasks() {
   return [...document.querySelectorAll('[data-task-card="1"]')].map(card => {
-    const id = card.getAttribute("data-task-id") || randomId("acct");
-    const g = f => { const e = card.querySelector(`[data-field="${f}"]`); return e ? e.value : ""; };
-    const gc = f => { const e = card.querySelector(`[data-field="${f}"]`); return !!(e && e.checked); };
-    let exp = Number(g("expiresAt")||0)||0;
-    return {
-      id, name: String(g("name")||"").trim()||id,
-      enabled: gc("enabled"),
-      skipSignals: Number(g("skipSignals")||0)||0,
-      timeRanges: collectTimeRangesFromCard(card),
-      allowedSymbols: String(g("allowedSymbols")||"").trim(),
-      expiresAt: exp,
-      httpProxyUrl: String(g("httpProxyUrl")||"").trim(),
-      apiUrl: String(g("apiUrl")||"").trim(),
-      method: String(g("method")||"POST").trim().toUpperCase(),
-      headers: String(g("headers")||""),
-      body: String(g("body")||""),
-      valueBuy: String(g("valueBuy")||"").trim(),
-      valueSell: String(g("valueSell")||"").trim(),
-    };
+    const id=card.getAttribute("data-task-id")||rid("acct");
+    const g=f=>{const e=card.querySelector(`[data-field="${f}"]`);return e?e.value:""};
+    const gc=f=>{const e=card.querySelector(`[data-field="${f}"]`);return!!(e&&e.checked)};
+    return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"), skipSignals:+g("skipSignals")||0,
+      timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
+      httpProxyUrl: String(g("httpProxyUrl")||"").trim(), apiUrl: String(g("apiUrl")||"").trim(),
+      method: String(g("method")||"POST").trim().toUpperCase(), headers: String(g("headers")||""), body: String(g("body")||""),
+      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim() };
   });
 }
 
-// ── Validation ────────────────────────────────────
+function validate(ts) { ts.forEach(t=>{ if(!t.apiUrl) throw new Error(`账号[${t.name}] API URL 为空`); vtr(t); }); }
+function vtr(t) { const r=ctr(t.timeRanges); if(r.length>4) throw new Error(`账号[${t.name}] 最多4段`);
+  r.forEach((x,i)=>{ const l=`账号[${t.name}] 时段#${i+1}`; if(!x.start||!x.end) throw new Error(`${l} 起止必填`);
+    const sm=pm(x.start,l), em=pm(x.end,l); if(sm===em) throw new Error(`${l} 起止不能相同`); }); }
+function pm(v,l) { if(!/^\d{2}:\d{2}$/.test(v)) throw new Error(`${l} 需HH:00`); const [h,m]=v.split(":").map(Number); if(h<0||h>23||m!==0) throw new Error(`${l} 仅整点`); return h*60+m; }
 
-function validateTasks(tasks) {
-  tasks.forEach(t => {
-    if (!t.apiUrl) throw new Error(`账号[${t.name}] API URL 为空`);
-    validateTimeRanges(t);
-  });
-}
-
-function validateTimeRanges(task) {
-  const r = compactTimeRanges(task.timeRanges);
-  if (r.length > 4) throw new Error(`账号[${task.name}] 最多4个时间段`);
-  r.forEach((range, i) => {
-    const lbl = `账号[${task.name}] 时段#${i+1}`;
-    if (!range.start || !range.end) throw new Error(`${lbl} 起止时间必填`);
-    const sm = parseMin(range.start, lbl), em = parseMin(range.end, lbl);
-    if (sm === em) throw new Error(`${lbl} 起止时间不能相同`);
-  });
-}
-
-function parseMin(v, lbl) {
-  if (!/^\d{2}:\d{2}$/.test(v)) throw new Error(`${lbl} 需HH:00格式`);
-  const [h,m] = v.split(":").map(Number);
-  if (h<0||h>23||m!==0) throw new Error(`${lbl} 仅支持整点`);
-  return h*60+m;
-}
-
-// ── WS Status ─────────────────────────────────────
+// ── WS Status ──
 
 async function updateWSStatus() {
   try {
     const s = await apiGet("/api/ws/status");
-    // Server conns
-    const se = document.getElementById("ws-server-status");
-    if (se) {
-      const sp = se.querySelector("span");
+    const el = $("ws-server-status");
+    if (el) {
       const n = s.wsServerConns||0;
-      if (sp) sp.textContent = n;
-      se.className = "status-badge "+(n>0?"status-on":"status-off")+" text-[11px]";
+      el.innerHTML = `接入 <strong class="ml-0.5">${n}</strong>`;
+      el.className = `inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${n>0?'bg-green-50 text-green-700 border-green-200':'bg-gray-100 text-gray-500'}`;
     }
-    // Upstream status
-    const ue = document.getElementById("ws-status");
-    if (ue && s.connected !== undefined) {
-      ue.style.display = "";
-      const up = ue.querySelector("span");
-      if (up) up.textContent = s.connected ? "已连接" : "未连接";
-      ue.className = "status-badge "+(s.connected?"status-on":"status-off")+" text-[11px]";
-    }
-  } catch(e) { console.error("status", e); }
+  } catch(e) {}
 }
 
 function updateWSEndpoint() {
-  const el = document.getElementById("wsServerEndpoint");
-  if (!el) return;
-  const path = getValue("wsServerPath") || "/ws";
-  const key = getValue("wsServerKey") || "";
-  let url = location.origin + path;
-  if (key) url += "?key=" + encodeURIComponent(key);
-  el.textContent = url;
+  const el = $("wsServerEndpoint"); if (!el) return;
+  const p = getVal("wsServerPath")||"/ws", k = getVal("wsServerKey")||"";
+  el.textContent = location.origin + p + (k?"?key="+encodeURIComponent(k):"");
 }
 
 function copyWSEndpoint() {
-  const t = document.getElementById("wsServerEndpoint")?.textContent || "";
-  navigator.clipboard.writeText(t).then(() => {
-    appendLog({ level:"INFO", source:"ui", message:"地址已复制" });
-  }).catch(() => prompt("复制:", t));
+  const t = $("wsServerEndpoint")?.textContent||"";
+  navigator.clipboard.writeText(t).then(()=>log("已复制")).catch(()=>prompt("复制:",t));
 }
 
-// ── Countdown ─────────────────────────────────────
+// ── Expires ──
 
-let cdInterval = null;
-
-function initCountdowns() {
-  if (cdInterval) clearInterval(cdInterval);
-  cdInterval = setInterval(() => {
-    stateTasks.forEach(t => updateCountdown(t.id, t.expiresAt));
-  }, 1000);
+let cdTimer;
+function initCountdowns() { if(cdTimer) clearInterval(cdTimer); cdTimer=setInterval(()=>stateTasks.forEach(t=>updateCD(t.id,t.expiresAt)),1000); }
+function updateCD(tid, ts) {
+  const el = $(`countdown-${tid}`); if (!el) return;
+  if (!ts) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden","countdown-normal","countdown-warn","countdown-danger");
+  const d=ts-Math.floor(Date.now()/1000);
+  if(d<=0){el.textContent="已过期";el.classList.add("countdown-danger");return}
+  const h=Math.floor(d/3600),m=Math.floor((d%3600)/60);
+  if(h>24){const dd=Math.floor(h/24);el.textContent=`${dd}d${h%24}h`;el.classList.add("countdown-normal")}
+  else if(h>=1){el.textContent=`${h}h${m}m`;el.classList.add("countdown-normal")}
+  else{el.textContent=`${m}m${d%60}s`;el.classList.add("countdown-warn")}
 }
+window.updateCD = updateCD;
 
-function updateCountdown(taskId, ts) {
-  const el = document.getElementById(`countdown-${taskId}`);
-  if (!el) return;
-  const sec = ts || 0;
-  if (!sec) { el.classList.add("hidden"); return; }
-  el.classList.remove("hidden","countdown-normal","countdown-warn","countdown-danger","animate-pulse");
-  const diff = sec - Math.floor(Date.now()/1000);
-  if (diff <= 0) { el.textContent="已过期"; el.classList.add("countdown-danger","animate-pulse"); return; }
-  const h=Math.floor(diff/3600), m=Math.floor((diff%3600)/60);
-  if (h>24) { const d=Math.floor(h/24); el.textContent=`${d}d${h%24}h`; el.classList.add("countdown-normal"); }
-  else if (h>=1) { el.textContent=`${h}h${m}m`; el.classList.add("countdown-normal"); }
-  else { el.textContent=`${m}m${diff%60}s`; el.classList.add("countdown-warn"); }
-}
-
-window.updateCountdown = updateCountdown;
-
-// ── Expires ───────────────────────────────────────
-
-function setExpiresDays(taskId, days) {
-  const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
+function setExpires(tid, days) {
+  const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);
   if (!card) return;
   const inp = card.querySelector('[data-field="expiresAt"]');
-  const disp = document.getElementById(`expires-display-${taskId}`);
-  if (!inp || !disp) return;
-  let v = 0;
-  if (days > 0) {
-    const now = Math.floor(Date.now()/1000);
-    let cur = Number(inp.value)||0;
-    if (cur < now) cur = now;
-    v = cur + days*86400;
-  }
-  inp.value = v;
-  disp.textContent = fmtDT(v);
-  const t = stateTasks.find(x => x.id===taskId);
-  if (t) t.expiresAt = v;
-  updateCountdown(taskId, v);
+  const disp = $(`expires-display-${tid}`);
+  if (!inp||!disp) return;
+  let v=0;
+  if (days>0) { const n=Math.floor(Date.now()/1000); let c=+inp.value||0; if(c<n)c=n; v=c+days*86400; }
+  inp.value=v; disp.textContent=fmtDT(v);
+  const t=stateTasks.find(x=>x.id===tid); if(t) t.expiresAt=v;
 }
+window.setExpires = setExpires;
+function fmtDT(u) { if(!u)return"未设置";const d=new Date(u*1000),p=n=>String(n).padStart(2,"0");return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 
-window.setExpiresDays = setExpiresDays;
+// ── cURL ──
 
-function fmtDT(unix) {
-  if (!unix) return "未设置";
-  const d = new Date(unix*1000);
-  const p = n => String(n).padStart(2,"0");
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+function promptImportCurl(tid) {
+  const s=prompt("粘贴 curl:");if(!s)return;
+  try{const p=parseCurl(s);const c=document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);if(!c)return;
+    const set=(f,v)=>{const e=c.querySelector(`[data-field="${f}"]`);if(e)e.value=v??"";};
+    if(p.url)set("apiUrl",p.url);if(p.method)set("method",p.method);if(p.headers)set("headers",p.headers);if(p.body)set("body",p.body);
+    log(`cURL → ${tid}`);}catch(e){alert("解析失败: "+e.message);}
 }
-
-// ── cURL import ───────────────────────────────────
-
-function promptImportCurl(taskId) {
-  const s = prompt("粘贴 curl 命令:");
-  if (!s) return;
-  try {
-    const p = parseCurl(s);
-    const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
-    if (!card) return;
-    const set = (f,v) => { const e=card.querySelector(`[data-field="${f}"]`); if(e)e.value=v==null?"":String(v); };
-    if (p.url) set("apiUrl", p.url);
-    if (p.method) set("method", p.method);
-    if (p.headers) set("headers", p.headers);
-    if (p.body) set("body", p.body);
-    appendLog({ level:"INFO", source:"ui", message:`cURL → ${taskId}` });
-  } catch(e) { alert("解析失败: "+e.message); }
-}
-
-function parseCurl(s) {
-  const r = { method:"GET", url:"", headers:"", body:"" };
-  s = s.replace(/\\\r?\n/g," ");
-  const u = s.match(/https?:\/\/[^\s'"]+/i);
-  if (u) r.url = u[0].replace(/`/g,"");
-  const m = s.match(/(?:-X|--request)\s+['"]?([A-Za-z]+)['"]?/);
-  if (m) r.method = m[1].toUpperCase();
-  let hs = [];
-  const hr = /(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;
-  let h;
-  while ((h=hr.exec(s))!==null) hs.push((h[2]||h[3]||"").replace(/`/g,"").trim());
-  const cr = /(?:-b|--cookie)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;
-  while ((h=cr.exec(s))!==null) { const c=(h[2]||h[3]||"").replace(/`/g,"").trim(); if(c) hs.push("Cookie: "+c); }
-  r.headers = hs.join("\n");
-  const br = /(?:-d|--data|--data-raw|--data-binary)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/i;
-  const bm = s.match(br);
-  if (bm) { r.body = bm[2]||bm[3]||""; if (!m) r.method="POST"; }
+function parseCurl(s){
+  const r={method:"GET",url:"",headers:"",body:""};s=s.replace(/\\\r?\n/g," ");
+  const u=s.match(/https?:\/\/[^\s'"]+/i);if(u)r.url=u[0].replace(/`/g,"");
+  const m=s.match(/(?:-X|--request)\s+['"]?([A-Za-z]+)['"]?/);if(m)r.method=m[1].toUpperCase();
+  let hs=[];const hr=/(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;let h;
+  while((h=hr.exec(s))!==null) hs.push((h[2]||h[3]||"").replace(/`/g,"").trim());
+  const cr=/(?:-b|--cookie)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;
+  while((h=cr.exec(s))!==null){const c=(h[2]||h[3]||"").replace(/`/g,"").trim();if(c)hs.push("Cookie: "+c);}
+  r.headers=hs.join("\n");
+  const br=/(?:-d|--data|--data-raw|--data-binary)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/i;
+  const bm=s.match(br);if(bm){r.body=bm[2]||bm[3]||"";if(!m)r.method="POST";}
   return r;
 }
 
-// ── Logs ──────────────────────────────────────────
+// ── Logs ──
 
 function initLogs() {
-  const c = document.getElementById("log-container");
-  const es = new EventSource("/api/logs/stream");
-  es.onopen = () => { if (c) c.innerHTML = ""; };
-  es.onmessage = ev => {
-    try { appendLog(JSON.parse(ev.data)); } catch(e) { console.error("log parse", e); }
-  };
-  es.onerror = () => console.debug("SSE reconnect");
+  const c=$("log-container");const es=new EventSource("/api/logs/stream");
+  es.onopen=()=>{if(c)c.innerHTML="";};
+  es.onmessage=ev=>{try{appendLog(JSON.parse(ev.data));}catch(e){console.error(e);}};
+  es.onerror=()=>{};
 }
-
-function appendLog(entry) {
-  const c = document.getElementById("log-container");
-  if (!c) return;
-  const row = document.createElement("div");
-  row.className = "flex gap-2 items-start text-[11px] leading-relaxed";
-  const ts = entry.time ? new Date(entry.time).toLocaleTimeString("zh-CN",{hour12:false}) : new Date().toLocaleTimeString("zh-CN",{hour12:false});
-  const lv = (entry.level||"INFO").toUpperCase();
-  const src = entry.source||"";
-  const msg = entry.message||"";
-  const cls = lv==="ERROR"?"text-red-600":lv==="DEBUG"?"text-blue-600":"text-green-700";
-  row.innerHTML = `<span class="text-gray-400 shrink-0">${ts}</span><span class="shrink-0 ${cls}">[${lv}]</span><span class="shrink-0 text-gray-400">${esc(src)}</span><span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${esc(msg)}</span>`;
-  c.appendChild(row);
-  while (c.children.length > 500) c.removeChild(c.firstChild);
-  c.scrollTop = c.scrollHeight;
+function appendLog(e) {
+  const c=$("log-container");if(!c)return;
+  const r=document.createElement("div");r.className="flex gap-2 items-start text-[11px] leading-relaxed";
+  const t=e.time?new Date(e.time).toLocaleTimeString("zh-CN",{hour12:false}):new Date().toLocaleTimeString("zh-CN",{hour12:false});
+  const l=(e.level||"INFO").toUpperCase(),s=e.source||"",m=e.message||"";
+  const cl=l==="ERROR"?"text-red-600":l==="DEBUG"?"text-blue-600":"text-green-700";
+  r.innerHTML=`<span class="text-gray-400 shrink-0">${t}</span><span class="shrink-0 ${cl}">[${l}]</span><span class="shrink-0 text-gray-400">${esc(s)}</span><span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${esc(m)}</span>`;
+  c.appendChild(r);while(c.children.length>500)c.removeChild(c.firstChild);c.scrollTop=c.scrollHeight;
 }
+function log(msg, lv) { appendLog({ time: new Date().toISOString(), level: lv||"INFO", source: "ui", message: msg }); }
 
-// ── Helpers ───────────────────────────────────────
+// ── Helpers ──
 
-function randomId(p) {
-  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch {}
-  return `${p}-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
-}
-
+function rid(p) { try{return crypto?.randomUUID?.()||`${p}-${Date.now()}-${Math.floor(Math.random()*1e6)}`;}catch{return p+"-"+Date.now();} }
 function cssEscape(s) { return String(s).replace(/"/g,'\\"'); }
-function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
-function setValue(id,v) { const e=document.getElementById(id); if(e) e.value = v==null?"":String(v); }
-function getValue(id) { const e=document.getElementById(id); return e?e.value:""; }
-function setChecked(id,v) { const e=document.getElementById(id); if(e) e.checked=!!v; }
-function isChecked(id) { const e=document.getElementById(id); return !!(e&&e.checked); }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function setVal(id,v) { const e=$(id); if(e) e.value = v??""; }
+function getVal(id) { const e=$(id); return e?e.value:""; }
+function setChk(id,v) { const e=$(id); if(e) e.checked=!!v; }
+function isChk(id) { const e=$(id); return !!e?.checked; }

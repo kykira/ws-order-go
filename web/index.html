@@ -5,93 +5,90 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>WS 下单桥接</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="/styles.css" />
+<style>
+  :root { --g: #8bc34a; --gl: #f1f8e9; --gb: #c5e1a5; --gt: #558b2f; }
+  .switch-label { display:inline-flex;align-items:center;gap:0.5rem;cursor:pointer;user-select:none; }
+  .switch { position:relative;display:inline-flex;align-items:center;flex-shrink:0; }
+  .switch input { position:absolute;opacity:0;width:0;height:0; }
+  .switch-track { display:block;width:2.25rem;height:1.25rem;background:#d1d5db;border-radius:9999px;transition:background 0.2s;position:relative; }
+  .switch-track::after { content:'';position:absolute;top:0.1875rem;left:0.1875rem;width:0.875rem;height:0.875rem;background:#fff;border-radius:9999px;box-shadow:0 1px 3px rgba(0,0,0,.15);transition:transform 0.2s; }
+  .switch input:checked+.switch-track { background:var(--g); }
+  .switch input:checked+.switch-track::after { transform:translateX(1rem); }
+  .log-box { height:16rem;overflow-y:auto;font-family:ui-monospace,monospace;font-size:.6875rem;line-height:1.6;background:#f9fafb;border:1px solid #e5e7eb;border-radius:.375rem;padding:.5rem; }
+  .log-box::-webkit-scrollbar { width:5px; }
+  .log-box::-webkit-scrollbar-thumb { background:rgba(139,195,74,.6);border-radius:9999px; }
+  .time-range-empty { padding:.5rem .75rem;border:1px dashed #d1d5db;border-radius:.375rem;font-size:.75rem;color:#6b7280;background:#f9fafb; }
+  .countdown { font-size:.6875rem;font-weight:500;padding:.125rem .4rem;border-radius:.25rem; }
+  .countdown-normal { background:var(--gl);color:var(--gt); }
+  .countdown-warn { background:#fef3c7;color:#92400e; }
+  .countdown-danger { background:#fee2e2;color:#dc2626; }
+</style>
 </head>
 <body class="bg-gray-50 text-gray-900 antialiased">
 
 <div class="min-h-screen flex flex-col">
 
-<!-- Header -->
-<header class="border-b border-gray-200 bg-white sticky top-0 z-10">
+<header class="border-b bg-white sticky top-0 z-10">
   <div class="max-w-5xl mx-auto px-4 h-12 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <h1 class="text-sm font-bold tracking-tight">🔌 WS 下单桥接</h1>
-      <span class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">v2</span>
+    <div class="flex items-center gap-2">
+      <h1 class="text-sm font-bold">🔌 WS 下单桥接</h1>
     </div>
     <div class="flex items-center gap-2">
-      <div id="ws-server-status" class="status-badge status-off text-[11px]">
-        接入 <span class="ml-0.5 font-semibold">0</span>
-      </div>
-      <div id="ws-status" class="status-badge status-off text-[11px]" style="display:none">
-        WS <span class="ml-0.5 font-semibold">-</span>
-      </div>
+      <span id="ws-server-status" class="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border">
+        接入 <strong class="ml-0.5">0</strong>
+      </span>
     </div>
   </div>
 </header>
 
-<!-- Main -->
 <main class="flex-1 max-w-5xl mx-auto w-full px-4 py-4 space-y-4">
 
   <!-- Toolbar -->
   <div class="flex items-center justify-between gap-2 flex-wrap">
     <div class="flex items-center gap-2">
-      <span class="text-xs font-medium text-gray-500">分发</span>
-      <select id="dispatchMode" class="input text-xs" style="width:auto;padding:0.3rem 0.5rem">
+      <span class="text-xs text-gray-500 font-medium">分发</span>
+      <select id="dispatchMode" class="border rounded px-2 py-1 text-xs bg-white">
         <option value="round-robin">顺序轮询</option>
         <option value="random">随机选一</option>
         <option value="all">全部执行</option>
       </select>
-      <span class="text-[10px] text-gray-400 hidden sm:inline">round-robin: 每30分钟恢复1槽位，上限5</span>
+      <span class="text-[10px] text-gray-400 hidden sm:inline">每30分钟恢复1槽位，上限5</span>
     </div>
     <div class="flex items-center gap-1.5">
-      <button id="btn-import-json" class="btn btn-ghost text-[11px]">导入</button>
-      <button id="btn-add-task" class="btn btn-ghost text-[11px]">+ 账号</button>
-      <button id="btn-save-config" class="btn btn-primary text-[11px]">保存</button>
+      <button id="btn-import-json" class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50">导入</button>
+      <button id="btn-add-task" class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50">+ 账号</button>
+      <button id="btn-save-config" class="rounded px-2 py-1 text-[11px] text-white font-medium" style="background:var(--g)">保存</button>
     </div>
   </div>
 
-  <!-- WS Server (collapsible) -->
-  <details class="card" open>
-    <summary class="section-title cursor-pointer select-none">WS 服务端</summary>
-    <div class="grid gap-2 sm:grid-cols-3 mt-2">
-      <div>
-        <label class="label">路径</label>
-        <input id="wsServerPath" class="input" placeholder="/ws" />
-      </div>
-      <div>
-        <label class="label">密钥 <span class="tag tag-muted">可选</span></label>
-        <input id="wsServerKey" class="input" placeholder="?key=" />
-      </div>
+  <!-- WS Server -->
+  <div class="bg-white border rounded-lg p-3">
+    <h2 class="text-xs font-semibold mb-2 cursor-pointer select-none" onclick="this.parentElement.querySelector('.ws-body').classList.toggle('hidden')">▾ WS 服务端</h2>
+    <div class="ws-body grid gap-2 sm:grid-cols-3">
+      <div><label class="block text-[11px] text-gray-500 mb-0.5">路径</label><input id="wsServerPath" class="border rounded w-full px-2 py-1 text-xs" placeholder="/ws" /></div>
+      <div><label class="block text-[11px] text-gray-500 mb-0.5">密钥</label><input id="wsServerKey" class="border rounded w-full px-2 py-1 text-xs" placeholder="可选" /></div>
       <div class="flex items-end gap-3">
-        <label class="switch-label mb-1">
-          <span class="text-[11px] text-gray-500">启用</span>
-          <span class="switch"><input id="wsServerEnabled" type="checkbox" class="switch-input" /><span class="switch-track"></span></span>
-        </label>
-        <label class="switch-label mb-1">
-          <span class="text-[11px] text-gray-500">skip信号</span>
-          <span class="switch"><input id="wsServerApplySkip" type="checkbox" class="switch-input" /><span class="switch-track"></span></span>
-        </label>
+        <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input id="wsServerEnabled" type="checkbox" /><span class="switch-track"></span></span></label>
+        <label class="switch-label"><span class="text-[11px] text-gray-500">skip</span><span class="switch"><input id="wsServerApplySkip" type="checkbox" /><span class="switch-track"></span></span></label>
       </div>
     </div>
     <div class="mt-2 flex items-center gap-2">
-      <code id="wsServerEndpoint" class="flex-1 bg-gray-100 px-2 py-1 rounded text-[11px] font-mono text-gray-500 break-all"></code>
-      <button class="btn btn-ghost text-[10px]" onclick="copyWSEndpoint()">复制</button>
+      <code id="wsServerEndpoint" class="flex-1 bg-gray-100 px-2 py-1 rounded text-[11px] text-gray-500 break-all"></code>
+      <button class="border rounded px-2 py-1 text-[10px] bg-white" onclick="copyWSEndpoint()">复制</button>
     </div>
-  </details>
+  </div>
 
-  <!-- Account list -->
-  <section>
-    <div id="tasks-container" class="space-y-3"></div>
-  </section>
+  <!-- Accounts -->
+  <div id="tasks-container" class="space-y-3"></div>
 
   <!-- Logs -->
-  <section class="card">
-    <div class="flex items-center justify-between mb-1.5">
-      <h2 class="section-title">日志</h2>
+  <div class="bg-white border rounded-lg p-3">
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="text-xs font-semibold">日志</h2>
       <span class="text-[10px] text-gray-400">最近500条</span>
     </div>
     <div id="log-container" class="log-box"></div>
-  </section>
+  </div>
 
 </main>
 </div>
