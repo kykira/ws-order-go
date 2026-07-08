@@ -13,11 +13,26 @@
     "key": "",
     "applySkip": false
   },
-  "dispatch": "random",
+  "dispatch": "round-robin",
   "tasks": [
     {
-      "id": "task-proxy-test",
-      "name": "Proxy Test",
+      "id": "acct-1",
+      "name": "Account 1",
+      "enabled": true,
+      "skipSignals": 0,
+      "allowedSymbols": "",
+      "expiresAt": 0,
+      "httpProxyUrl": "",
+      "apiUrl": "https://api.ipify.org?format=json",
+      "method": "GET",
+      "headers": "",
+      "body": "",
+      "valueBuy": "",
+      "valueSell": ""
+    },
+    {
+      "id": "acct-2",
+      "name": "Account 2",
       "enabled": true,
       "skipSignals": 0,
       "allowedSymbols": "",

@@ -46,7 +46,7 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Upstream UpstreamConfig `json:"upstream"`
 	WSServer WSServerConfig `json:"wsServer"`
-	Dispatch string         `json:"dispatch"` // "all" or "random", default "random"
+	Dispatch string         `json:"dispatch"` // "all", "random", or "round-robin", default "round-robin"
 	Tasks    []TaskConfig   `json:"tasks"`
 }
 
@@ -70,7 +70,7 @@ func DefaultConfig() Config {
 			Key:       "",
 			ApplySkip: false,
 		},
-		Dispatch: "random",
+		Dispatch: "round-robin",
 		Tasks: []TaskConfig{
 			{
 				ID:           "default",
@@ -100,7 +100,7 @@ func LoadManager(path string) (*Manager, error) {
 
 	// Apply defaults for missing fields
 	if cfg.Dispatch == "" {
-		cfg.Dispatch = "random"
+		cfg.Dispatch = "round-robin"
 	}
 
 	if err := PrepareTasks(cfg.Tasks); err != nil {

@@ -57,7 +57,7 @@ async function loadConfig() {
 
     // Dispatch mode
     const sel = document.getElementById("dispatchMode");
-    if (sel) sel.value = cfg.dispatch === "all" ? "all" : "random";
+    if (sel) sel.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
 
     stateTasks = normalizeTasks(cfg);
     renderTasks(stateTasks);
@@ -163,7 +163,7 @@ function initActions() {
         updateWSEndpoint();
 
         const dispatchEl = document.getElementById("dispatchMode");
-        if (dispatchEl) dispatchEl.value = cfg.dispatch === "all" ? "all" : "random";
+        if (dispatchEl) dispatchEl.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
         
         stateTasks = normalizeTasks(cfg);
         renderTasks(stateTasks);
@@ -262,7 +262,7 @@ function collectConfigPayload() {
   };
 
   const dispatchEl = document.getElementById("dispatchMode");
-  const dispatch = dispatchEl ? dispatchEl.value : "random";
+  const dispatch = dispatchEl ? dispatchEl.value : "round-robin";
 
   const tasks = collectTasksFromDom().map(normalizeTask);
   validateTasks(tasks);

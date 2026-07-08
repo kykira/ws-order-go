@@ -21,7 +21,6 @@ type Signal struct {
 	TickerType string `json:"tickerType,omitempty"`
 	Timestamp  string `json:"timestamp"`
 
-	// Keep these for backward compatibility or future extension if needed
 	Amount    string `json:"amount,omitempty"`
 	Unit      string `json:"unit,omitempty"`
 	Direction string `json:"direction,omitempty"`
@@ -32,22 +31,29 @@ type Processor struct {
 	logger *logs.Logger
 	order  *order.Client
 
-	mu            sync.Mutex
-	seenSkip      map[string]int
-	skipStartTime map[string]time.Time
+	mu             sync.Mutex
+	seenSkip       map[string]int
+	skipStartTime  map[string]time.Time
+	orderCounts    map[string]int
+	orderStartTime map[string]time.Time
 }
 
 func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client) *Processor {
 	return &Processor{
-		cfg:           cfg,
-		logger:        logger,
-		order:         orderClient,
-		seenSkip:      make(map[string]int),
-		skipStartTime: make(map[string]time.Time),
+		cfg:            cfg,
+		logger:         logger,
+		order:          orderClient,
+		seenSkip:       make(map[string]int),
+		skipStartTime:  make(map[string]time.Time),
+		orderCounts:    make(map[string]int),
+		orderStartTime: make(map[string]time.Time),
 	}
 }
 
-// Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑（仅建议对上游 WS 启用）。
+const maxOrdersPerWindow = 5
+const orderWindowDuration = 30 * time.Minute
+
+// Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	cfg := p.cfg.Get()
 
@@ -60,7 +66,6 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	amount := strings.TrimSpace(sig.Amount)
 	unit := strings.TrimSpace(sig.Unit)
 
-	// Special-case: upstream action=test is treated as a dry-run log only.
 	if source == "upstream" && action == "test" {
 		p.logger.Info("signal", "上游心跳保活 (ping)")
 		return nil
@@ -71,7 +76,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 	}
 
-	// Collect matching tasks
+	// Collect matching accounts
 	var matched []config.TaskConfig
 	var matchedRange string
 
@@ -83,27 +88,25 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		currentTime := time.Now()
 		allowedNow, rangeDesc, err := config.IsTimeAllowed(task.TimeRanges, currentTime)
 		if err != nil {
-			p.logger.Error("signal", fmt.Sprintf("task=[%s] invalid time ranges, ignore signal: %v", task.Name, err))
+			p.logger.Error("signal", fmt.Sprintf("account=[%s] invalid time ranges: %v", task.Name, err))
 			continue
 		}
 		if !allowedNow {
-			p.logger.Info("signal", fmt.Sprintf("task=[%s] ignored by time ranges current=%s ranges=%s", task.Name, currentTime.Format("15:04"), config.FormatTimeRanges(task.TimeRanges)))
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] ignored by time ranges current=%s ranges=%s", task.Name, currentTime.Format("15:04"), config.FormatTimeRanges(task.TimeRanges)))
 			continue
 		}
 		matchedRange = rangeDesc
 
-		// Filter by AllowedSymbols
 		if strings.TrimSpace(task.AllowedSymbols) != "" {
 			allowed := false
-			symbols := strings.Split(task.AllowedSymbols, ",")
-			for _, s := range symbols {
+			for _, s := range strings.Split(task.AllowedSymbols, ",") {
 				if strings.TrimSpace(s) != "" && strings.EqualFold(strings.TrimSpace(s), sig.Symbol) {
 					allowed = true
 					break
 				}
 			}
 			if !allowed {
-				p.logger.Info("signal", fmt.Sprintf("task=[%s] skipped (symbol %s not in allowed list)", task.Name, sig.Symbol))
+				p.logger.Info("signal", fmt.Sprintf("account=[%s] skipped (symbol %s not in allowed list)", task.Name, sig.Symbol))
 				continue
 			}
 		}
@@ -121,20 +124,68 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 	}
 
-	// Dispatch: random pick one, or execute all
-	if cfg.Dispatch == "random" && len(matched) > 1 {
-		task := matched[rand.Intn(len(matched))]
-		p.logger.Info("signal", fmt.Sprintf("dispatch=random picked %d/%d account=[%s]", 1, len(matched), task.Name))
-		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+	switch cfg.Dispatch {
+	case "random":
+		if len(matched) > 1 {
+			task := matched[rand.Intn(len(matched))]
+			p.logger.Info("signal", fmt.Sprintf("dispatch=random picked 1/%d account=[%s]", len(matched), task.Name))
+			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+		} else {
+			p.executeTask(source, sig, matched[0], action, amount, unit, matchedRange)
+		}
 		return nil
-	}
 
-	// Default: execute all matched
-	for _, task := range matched {
-		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+	case "round-robin":
+		p.dispatchRoundRobin(source, sig, matched, action, amount, unit, matchedRange)
+		return nil
+
+	default: // "all" or empty
+		for _, task := range matched {
+			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+		}
 	}
 
 	return nil
+}
+
+// dispatchRoundRobin walks matched accounts in config order, picks the first
+// one with <5 orders in the current 30-minute window. Windows auto-reset.
+func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := time.Now()
+
+	for _, task := range matched {
+		// Check and maybe reset 30-min window
+		if start, ok := p.orderStartTime[task.ID]; ok && now.Sub(start) > orderWindowDuration {
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] 30m window expired, order count reset (%d→0)", task.Name, p.orderCounts[task.ID]))
+			p.orderCounts[task.ID] = 0
+			delete(p.orderStartTime, task.ID)
+		}
+
+		count := p.orderCounts[task.ID]
+		if count >= maxOrdersPerWindow {
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] at limit %d/%d, skipping", task.Name, count, maxOrdersPerWindow))
+			continue
+		}
+
+		// Claim this slot
+		if count == 0 {
+			p.orderStartTime[task.ID] = now
+		}
+		p.orderCounts[task.ID] = count + 1
+		p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s] order %d/%d", task.Name, count+1, maxOrdersPerWindow))
+
+		// Unlock before executeTask (which fires goroutine)
+		p.mu.Unlock()
+		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+		p.mu.Lock() // re-lock for defer
+		return
+	}
+
+	// All accounts full
+	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin all %d accounts at limit, signal dropped", len(matched)))
 }
 
 func (p *Processor) checkSkip(task config.TaskConfig) bool {
@@ -142,11 +193,10 @@ func (p *Processor) checkSkip(task config.TaskConfig) bool {
 	defer p.mu.Unlock()
 
 	now := time.Now()
-	// Reset if 30 minutes have passed since the first skipped signal for this task
 	if start, ok := p.skipStartTime[task.ID]; ok && now.Sub(start) > 30*time.Minute {
 		p.seenSkip[task.ID] = 0
 		delete(p.skipStartTime, task.ID)
-		p.logger.Info("signal", fmt.Sprintf("task=[%s] skip counter reset after 30m", task.Name))
+		p.logger.Info("signal", fmt.Sprintf("account=[%s] skip counter reset after 30m", task.Name))
 	}
 
 	if p.seenSkip[task.ID] < task.SkipSignals {
@@ -154,7 +204,7 @@ func (p *Processor) checkSkip(task config.TaskConfig) bool {
 			p.skipStartTime[task.ID] = now
 		}
 		p.seenSkip[task.ID]++
-		p.logger.Info("signal", fmt.Sprintf("skip %d/%d task=[%s]", p.seenSkip[task.ID], task.SkipSignals, task.Name))
+		p.logger.Info("signal", fmt.Sprintf("skip %d/%d account=[%s]", p.seenSkip[task.ID], task.SkipSignals, task.Name))
 		return false
 	}
 	return true
