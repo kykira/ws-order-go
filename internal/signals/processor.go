@@ -34,8 +34,8 @@ type Processor struct {
 	mu             sync.Mutex
 	seenSkip       map[string]int
 	skipStartTime  map[string]time.Time
-	orderCounts    map[string]int
-	orderStartTime map[string]time.Time
+	orderCounts   map[string]int
+	orderLastDecay map[string]time.Time
 }
 
 func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client) *Processor {
@@ -46,12 +46,12 @@ func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.C
 		seenSkip:       make(map[string]int),
 		skipStartTime:  make(map[string]time.Time),
 		orderCounts:    make(map[string]int),
-		orderStartTime: make(map[string]time.Time),
+		orderLastDecay: make(map[string]time.Time),
 	}
 }
 
 const maxOrdersPerWindow = 5
-const orderWindowDuration = 30 * time.Minute
+const orderDecayInterval = 30 * time.Minute
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
@@ -149,7 +149,8 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 }
 
 // dispatchRoundRobin walks matched accounts in config order, picks the first
-// one with <5 orders in the current 30-minute window. Windows auto-reset.
+// one below the 5-slot limit. Each account has 5 order slots; every 30 minutes
+// one slot is refilled (decay). +1 on order, -1 per 30min, floor 0.
 func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -157,35 +158,43 @@ func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []conf
 	now := time.Now()
 
 	for _, task := range matched {
-		// Check and maybe reset 30-min window
-		if start, ok := p.orderStartTime[task.ID]; ok && now.Sub(start) > orderWindowDuration {
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] 30m window expired, order count reset (%d→0)", task.Name, p.orderCounts[task.ID]))
-			p.orderCounts[task.ID] = 0
-			delete(p.orderStartTime, task.ID)
+		// Apply decay: every 30min elapsed since last decay, reduce count by 1
+		count := p.orderCounts[task.ID]
+		if last, ok := p.orderLastDecay[task.ID]; ok {
+			elapsed := now.Sub(last)
+			if elapsed >= orderDecayInterval {
+				decay := int(elapsed / orderDecayInterval)
+				if decay > count {
+					decay = count
+				}
+				count -= decay
+				p.orderLastDecay[task.ID] = last.Add(time.Duration(decay) * orderDecayInterval)
+				if decay > 0 {
+					p.logger.Info("signal", fmt.Sprintf("account=[%s] decay -%d (30m×%d) count %d→%d", task.Name, decay, decay, p.orderCounts[task.ID], count))
+				}
+			}
+		} else {
+			p.orderLastDecay[task.ID] = now
 		}
 
-		count := p.orderCounts[task.ID]
 		if count >= maxOrdersPerWindow {
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] at limit %d/%d, skipping", task.Name, count, maxOrdersPerWindow))
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", task.Name, count, maxOrdersPerWindow))
+			p.orderCounts[task.ID] = count
 			continue
 		}
 
-		// Claim this slot
-		if count == 0 {
-			p.orderStartTime[task.ID] = now
-		}
-		p.orderCounts[task.ID] = count + 1
-		p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s] order %d/%d", task.Name, count+1, maxOrdersPerWindow))
+		// Claim slot: +1
+		count++
+		p.orderCounts[task.ID] = count
+		p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s] slot %d/%d", task.Name, count, maxOrdersPerWindow))
 
-		// Unlock before executeTask (which fires goroutine)
 		p.mu.Unlock()
 		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
-		p.mu.Lock() // re-lock for defer
+		p.mu.Lock()
 		return
 	}
 
-	// All accounts full
-	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin all %d accounts at limit, signal dropped", len(matched)))
+	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin all %d accounts full, signal dropped", len(matched)))
 }
 
 func (p *Processor) checkSkip(task config.TaskConfig) bool {

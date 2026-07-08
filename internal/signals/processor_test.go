@@ -2,6 +2,7 @@ package signals
 
 import (
 	"testing"
+	"time"
 
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
@@ -163,7 +164,7 @@ func TestDispatchRoundRobin5Limit(t *testing.T) {
 
 	sig := Signal{Action: "buy", Symbol: "BTCUSDT"}
 
-	// Send 7 signals — Acc-1 gets 5, Acc-2 gets 2
+	// Send 7 signals rapidly — Acc-1 gets 5 slots, Acc-2 gets 2
 	for i := 0; i < 7; i++ {
 		sig.OrderID = int64(i)
 		_ = proc.Handle("test", sig, false)
@@ -182,13 +183,63 @@ func TestDispatchRoundRobin5Limit(t *testing.T) {
 			count2++
 		}
 	}
-	t.Logf("Acc-1 orders: %d, Acc-2 orders: %d", count1, count2)
+	t.Logf("Acc-1: %d, Acc-2: %d", count1, count2)
 
 	if count1 != 5 {
-		t.Errorf("Acc-1 should have 5 orders, got %d", count1)
+		t.Errorf("Acc-1 should have 5 slots, got %d", count1)
 	}
 	if count2 != 2 {
-		t.Errorf("Acc-2 should have 2 orders, got %d", count2)
+		t.Errorf("Acc-2 should have 2 slots, got %d", count2)
+	}
+}
+
+func TestDispatchRoundRobinDecay(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := dir + "/config.json"
+
+	cfg := config.Config{
+		Server:   config.ServerConfig{Port: 0},
+		Dispatch: "round-robin",
+		Tasks: []config.TaskConfig{
+			{ID: "a1", Name: "Solo", Enabled: true, APIUrl: "http://a", Method: "GET"},
+		},
+	}
+	mgr, err := config.LoadManager(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mgr.Update(func(c *config.Config) { *c = cfg })
+
+	logger := logs.NewLogger(100)
+	orderClient := order.NewClient(logger)
+	proc := NewProcessor(mgr, logger, orderClient)
+
+	sig := Signal{Action: "buy", Symbol: "BTCUSDT"}
+
+	// Fill 5 slots
+	for i := 0; i < 5; i++ {
+		sig.OrderID = int64(i)
+		_ = proc.Handle("test", sig, false)
+	}
+
+	// Manually simulate 30min decay by advancing orderLastDecay
+	proc.mu.Lock()
+	proc.orderLastDecay["a1"] = time.Now().Add(-31 * time.Minute)
+	proc.mu.Unlock()
+
+	// Now one slot should be available again
+	sig.OrderID = 99
+	_ = proc.Handle("test", sig, false)
+
+	count := 0
+	for _, e := range logger.Entries() {
+		if contains(e.Message, "account=[Solo]") && contains(e.Message, "source=test") {
+			count++
+			t.Logf("[%s] %s", e.Level, e.Message)
+		}
+	}
+	if count < 6 {
+		t.Errorf("expected 6 orders after decay (5 + 1), got %d", count)
 	}
 }
 
