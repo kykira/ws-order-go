@@ -98,6 +98,11 @@ func LoadManager(path string) (*Manager, error) {
 		return nil, err
 	}
 
+	// Apply defaults for missing fields
+	if cfg.Dispatch == "" {
+		cfg.Dispatch = "random"
+	}
+
 	if err := PrepareTasks(cfg.Tasks); err != nil {
 		return nil, err
 	}
