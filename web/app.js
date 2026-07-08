@@ -4,14 +4,11 @@ document.addEventListener("DOMContentLoaded", () => {
   initLogs();
 });
 
-const BINANCE_PLACE_ORDER_URL =
-  "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order";
-
 let stateTasks = [];
 
 async function apiGet(path) {
   const res = await fetch(path);
-  if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
+  if (!res.ok) throw new Error(`GET ${path} ${res.status}`);
   return res.json();
 }
 
@@ -23,247 +20,102 @@ async function apiPost(path, body) {
   });
   if (!res.ok) {
     let msg = await res.text().catch(() => "");
-    throw new Error(`POST ${path} failed: ${res.status} ${msg}`);
+    throw new Error(`POST ${path} ${res.status} ${msg}`);
   }
-  try {
-    return await res.json();
-  } catch {
-    return {};
-  }
+  try { return await res.json(); } catch { return {}; }
 }
 
+// ── Init ──────────────────────────────────────────
+
 function initConfig() {
-  loadConfig().catch((err) => console.error(err));
+  loadConfig().catch(err => console.error(err));
   updateWSStatus();
   setInterval(updateWSStatus, 3000);
 }
 
 async function loadConfig() {
-  try {
-    const cfg = await apiGet("/api/config");
+  const cfg = await apiGet("/api/config");
 
-    // Upstream WS (legacy client mode)
-    setValue("wsUrl", cfg.upstream?.wsUrl || "");
-    setValue("wsKey", cfg.upstream?.wsKey || "");
-    setChecked("wsEnabled", !!cfg.upstream?.enabled);
+  // WS Server
+  const ws = cfg.wsServer || {};
+  setValue("wsServerPath", ws.path || "/ws");
+  setValue("wsServerKey", ws.key || "");
+  setChecked("wsServerEnabled", ws.enabled !== false);
+  setChecked("wsServerApplySkip", !!ws.applySkip);
+  updateWSEndpoint();
 
-    // WS Server (passive server mode)
-    const wsServer = cfg.wsServer || {};
-    setValue("wsServerPath", wsServer.path || "/ws");
-    setValue("wsServerKey", wsServer.key || "");
-    setChecked("wsServerEnabled", wsServer.enabled !== false);
-    setChecked("wsServerApplySkip", !!wsServer.applySkip);
-    updateWSEndpoint();
+  // Upstream (legacy)
+  setValue("wsUrl", cfg.upstream?.wsUrl || "");
+  setValue("wsKey", cfg.upstream?.wsKey || "");
+  setChecked("wsEnabled", !!cfg.upstream?.enabled);
 
-    // Dispatch mode
-    const sel = document.getElementById("dispatchMode");
-    if (sel) sel.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
+  // Dispatch
+  const sel = document.getElementById("dispatchMode");
+  if (sel) sel.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
 
-    stateTasks = normalizeTasks(cfg);
-    renderTasks(stateTasks);
-  } catch (err) {
-    console.error("loadConfig error", err);
-    appendLog({
-      time: new Date().toISOString(),
-      level: "ERROR",
-      source: "ui",
-      message: `加载配置失败: ${err.message}`,
-    });
-  }
+  stateTasks = normalizeTasks(cfg);
+  renderTasks(stateTasks);
 }
 
 function initActions() {
-  const btnSave = document.getElementById("btn-save-config");
-  if (btnSave) {
-    btnSave.addEventListener("click", async () => {
-      try {
-        const payload = collectConfigPayload();
-        await apiPost("/api/config", payload);
-        appendLog({
-          time: new Date().toISOString(),
-          level: "INFO",
-          source: "ui",
-          message: "配置已保存并应用",
-        });
-        // Refresh from server (server may normalize tasks)
-        await loadConfig();
-      } catch (err) {
-        appendLog({
-          time: new Date().toISOString(),
-          level: "ERROR",
-          source: "ui",
-          message: `保存配置失败: ${err.message}`,
-        });
-      }
-    });
-  }
-
-  const btnConn = document.getElementById("btn-ws-connect");
-  if (btnConn) {
-    btnConn.addEventListener("click", async () => {
-      try {
-        await apiPost("/api/ws/connect", {});
-        appendLog({
-          time: new Date().toISOString(),
-          level: "INFO",
-          source: "ui",
-          message: "已请求连接上游 WS",
-        });
-        updateWSStatus();
-      } catch (err) {
-        appendLog({
-          time: new Date().toISOString(),
-          level: "ERROR",
-          source: "ui",
-          message: `连接上游 WS 失败: ${err.message}`,
-        });
-      }
-    });
-  }
-
-  const btnDisc = document.getElementById("btn-ws-disconnect");
-  if (btnDisc) {
-    btnDisc.addEventListener("click", async () => {
-      try {
-        await apiPost("/api/ws/disconnect", {});
-        appendLog({
-          time: new Date().toISOString(),
-          level: "INFO",
-          source: "ui",
-          message: "已请求断开上游 WS",
-        });
-        updateWSStatus();
-      } catch (err) {
-        appendLog({
-          time: new Date().toISOString(),
-          level: "ERROR",
-          source: "ui",
-          message: `断开上游 WS 失败: ${err.message}`,
-        });
-      }
-    });
-  }
-
-  const btnImportJson = document.getElementById("btn-import-json");
-  if (btnImportJson) {
-    btnImportJson.addEventListener("click", () => {
-      const jsonStr = prompt("请粘贴 config.json 的完整内容：");
-      if (!jsonStr) return;
-      try {
-        const cfg = JSON.parse(jsonStr);
-        setValue("wsUrl", cfg.upstream?.wsUrl || "");
-        setValue("wsKey", cfg.upstream?.wsKey || "");
-        setChecked("wsEnabled", !!cfg.upstream?.enabled);
-
-        const wsServer = cfg.wsServer || {};
-        setValue("wsServerPath", wsServer.path || "/ws");
-        setValue("wsServerKey", wsServer.key || "");
-        setChecked("wsServerEnabled", wsServer.enabled !== false);
-        setChecked("wsServerApplySkip", !!wsServer.applySkip);
-        updateWSEndpoint();
-
-        const dispatchEl = document.getElementById("dispatchMode");
-        if (dispatchEl) dispatchEl.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
-        
-        stateTasks = normalizeTasks(cfg);
-        renderTasks(stateTasks);
-        
-        appendLog({
-          time: new Date().toISOString(),
-          level: "INFO",
-          source: "ui",
-          message: "JSON 配置导入成功（未保存，请确认无误后点击“保存配置”）",
-        });
-      } catch (err) {
-        alert("JSON 解析失败: " + err.message);
-      }
-    });
-  }
-
-  const btnAdd = document.getElementById("btn-add-task");
-  if (btnAdd) {
-    btnAdd.addEventListener("click", () => {
-      if (document.querySelector('[data-task-card="1"]')) {
-        stateTasks = collectTasksFromDom();
-      }
-      stateTasks.push(buildDefaultTask());
-      renderTasks(stateTasks);
-    });
-  }
-
-}
-
-async function updateWSStatus() {
-  try {
-    const status = await apiGet("/api/ws/status");
-    const el = document.getElementById("ws-status");
-    if (!el) return;
-    const span = el.querySelector("span");
-    if (!span) return;
-    const connected = !!status.connected;
-    span.textContent = connected ? "已连接" : "未连接";
-    el.className = "status-badge " + (connected ? "status-on" : "status-off");
-
-    // WS Server connection count
-    const srvEl = document.getElementById("ws-server-status");
-    if (srvEl) {
-      const srvSpan = srvEl.querySelector("span");
-      const conns = status.wsServerConns || 0;
-      if (srvSpan) srvSpan.textContent = conns;
-      srvEl.style.display = "";
-      srvEl.className = "status-badge " + (conns > 0 ? "status-on" : "status-off");
+  document.getElementById("btn-save-config")?.addEventListener("click", async () => {
+    try {
+      const payload = collectConfigPayload();
+      await apiPost("/api/config", payload);
+      appendLog({ time: new Date().toISOString(), level: "INFO", source: "ui", message: "配置已保存" });
+      await loadConfig();
+    } catch (err) {
+      appendLog({ time: new Date().toISOString(), level: "ERROR", source: "ui", message: `保存失败: ${err.message}` });
     }
-  } catch (err) {
-    console.error("updateWSStatus error", err);
-  }
-}
-
-function updateWSEndpoint() {
-  const el = document.getElementById("wsServerEndpoint");
-  if (!el) return;
-  const path = getValue("wsServerPath") || "/ws";
-  const key = getValue("wsServerKey") || "";
-  let url = window.location.origin + path;
-  if (key) url += "?key=" + encodeURIComponent(key);
-  el.textContent = url;
-}
-
-function copyWSEndpoint() {
-  const el = document.getElementById("wsServerEndpoint");
-  if (!el) return;
-  const text = el.textContent || "";
-  navigator.clipboard.writeText(text).then(() => {
-    appendLog({ level: "INFO", source: "ui", message: "WS 接入地址已复制到剪贴板" });
-  }).catch(() => {
-    prompt("请手动复制以下地址:", text);
   });
+
+  document.getElementById("btn-import-json")?.addEventListener("click", () => {
+    const s = prompt("粘贴 config.json 内容：");
+    if (!s) return;
+    try {
+      const cfg = JSON.parse(s);
+      const ws = cfg.wsServer || {};
+      setValue("wsServerPath", ws.path || "/ws");
+      setValue("wsServerKey", ws.key || "");
+      setChecked("wsServerEnabled", ws.enabled !== false);
+      setChecked("wsServerApplySkip", !!ws.applySkip);
+      updateWSEndpoint();
+      setValue("wsUrl", cfg.upstream?.wsUrl || "");
+      setValue("wsKey", cfg.upstream?.wsKey || "");
+      setChecked("wsEnabled", !!cfg.upstream?.enabled);
+      const sel = document.getElementById("dispatchMode");
+      if (sel) sel.value = (cfg.dispatch === "all" || cfg.dispatch === "random") ? cfg.dispatch : "round-robin";
+      stateTasks = normalizeTasks(cfg);
+      renderTasks(stateTasks);
+      appendLog({ level: "INFO", source: "ui", message: "JSON 已导入（未保存）" });
+    } catch (e) { alert("JSON 解析失败: " + e.message); }
+  });
+
+  document.getElementById("btn-add-task")?.addEventListener("click", () => {
+    stateTasks = collectTasksFromDom();
+    stateTasks.push(buildDefaultTask());
+    renderTasks(stateTasks);
+  });
+
+  // WS Server field listeners
+  document.getElementById("wsServerPath")?.addEventListener("input", updateWSEndpoint);
+  document.getElementById("wsServerKey")?.addEventListener("input", updateWSEndpoint);
 }
 
-// Listen for wsServer field changes to update endpoint
-document.addEventListener("DOMContentLoaded", () => {
-  const pathEl = document.getElementById("wsServerPath");
-  const keyEl = document.getElementById("wsServerKey");
-  if (pathEl) pathEl.addEventListener("input", updateWSEndpoint);
-  if (keyEl) keyEl.addEventListener("input", updateWSEndpoint);
-});
+// ── Config collect ───────────────────────────────
 
 function collectConfigPayload() {
   const upstream = {
-    wsUrl: getValue("wsUrl"),
-    wsKey: getValue("wsKey"),
-    enabled: isChecked("wsEnabled"),
+    wsUrl: getValue("wsUrl"), wsKey: getValue("wsKey"), enabled: isChecked("wsEnabled"),
   };
-
   const wsServer = {
     path: getValue("wsServerPath") || "/ws",
     key: getValue("wsServerKey") || "",
     enabled: isChecked("wsServerEnabled"),
     applySkip: isChecked("wsServerApplySkip"),
   };
-
-  const dispatchEl = document.getElementById("dispatchMode");
-  const dispatch = dispatchEl ? dispatchEl.value : "round-robin";
-
+  const el = document.getElementById("dispatchMode");
+  const dispatch = el ? el.value : "round-robin";
   const tasks = collectTasksFromDom().map(normalizeTask);
   validateTasks(tasks);
   stateTasks = tasks;
@@ -272,693 +124,494 @@ function collectConfigPayload() {
 
 function normalizeTasks(cfg) {
   const tasks = Array.isArray(cfg?.tasks) ? cfg.tasks : [];
-    if (tasks.length > 0) return tasks.map(normalizeTask);
-
-    // Legacy fallback: map old upstream.skipSignals to default task
-    const legacySkip = cfg?.upstream?.skipSignals || 0;
-    return [
-        normalizeTask({
-            id: "default",
-            name: "Account 1",
-            enabled: true,
-            skipSignals: legacySkip,
-            httpProxyUrl: "",
-            apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
-            method: "POST",
-            headers: "Content-Type: application/json\nclienttype: web",
-            body: '{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}',
-            valueBuy: "LONG",
-            valueSell: "SHORT",
-        }),
-    ];
-}
-
-function normalizeTask(t) {
-    const task = t || {};
-    return {
-        id: String(task.id || "").trim() || randomId("task"),
-        name: String(task.name || "").trim() || "Task",
-        enabled: task.enabled !== false,
-        skipSignals: Number(task.skipSignals || 0) || 0,
-        timeRanges: compactTimeRanges(task.timeRanges),
-        expiresAt: Number(task.expiresAt || 0) || 0,
-        allowedSymbols: String(task.allowedSymbols || ""),
-        httpProxyUrl: String(task.httpProxyUrl || ""),
-        apiUrl: String(task.apiUrl || ""),
-        method: String(task.method || "POST").toUpperCase(),
-        headers: String(task.headers || ""),
-        body: String(task.body || ""),
-        valueBuy: String(task.valueBuy || ""),
-        valueSell: String(task.valueSell || ""),
-    };
-}
-
-function buildDefaultTask() {
-  return normalizeTask({
-    id: randomId("acct"),
-    name: "New Account",
-    enabled: true,
-    skipSignals: 0,
-    timeRanges: [],
-    expiresAt: 0,
-    httpProxyUrl: "",
+  if (tasks.length > 0) return tasks.map(normalizeTask);
+  return [normalizeTask({
+    id: "default", name: "Account 1", enabled: true, skipSignals: 0, httpProxyUrl: "",
     apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
     method: "POST",
     headers: "Content-Type: application/json\nclienttype: web",
     body: '{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}',
-    valueBuy: "LONG",
-    valueSell: "SHORT",
+    valueBuy: "LONG", valueSell: "SHORT",
+  })];
+}
+
+function normalizeTask(t) {
+  t = t || {};
+  return {
+    id: String(t.id || "").trim() || randomId("acct"),
+    name: String(t.name || "").trim() || "Account",
+    enabled: t.enabled !== false,
+    skipSignals: Number(t.skipSignals || 0) || 0,
+    timeRanges: compactTimeRanges(t.timeRanges),
+    allowedSymbols: String(t.allowedSymbols || ""),
+    expiresAt: Number(t.expiresAt || 0) || 0,
+    httpProxyUrl: String(t.httpProxyUrl || ""),
+    apiUrl: String(t.apiUrl || ""),
+    method: String(t.method || "POST").toUpperCase(),
+    headers: String(t.headers || ""),
+    body: String(t.body || ""),
+    valueBuy: String(t.valueBuy || ""),
+    valueSell: String(t.valueSell || ""),
+  };
+}
+
+function buildDefaultTask() {
+  return normalizeTask({
+    id: randomId("acct"), name: "New Account", enabled: true,
+    apiUrl: "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
+    method: "POST",
+    headers: "Content-Type: application/json\nclienttype: web",
+    body: '{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}',
+    valueBuy: "LONG", valueSell: "SHORT",
   });
 }
 
+// ── Render ────────────────────────────────────────
 
 function renderTasks(tasks) {
-  const container = document.getElementById("tasks-container");
-  if (!container) return;
+  const c = document.getElementById("tasks-container");
+  if (!c) return;
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    container.innerHTML =
-      '<div class="card text-center text-xs text-gray-400 py-6">暂无账号，点击上方"+ 添加账号"。</div>';
+    c.innerHTML = '<div class="card text-center text-xs text-gray-400 py-6">暂无账号，点击"+ 账号"添加</div>';
     return;
   }
-
-  container.innerHTML = tasks.map((t) => taskCardHtml(t)).join("\n");
-
-  // 初始化倒计时
+  c.innerHTML = tasks.map((t, i) => accountCard(t, i + 1)).join("\n");
   initCountdowns();
+  bindCardEvents(c);
+}
 
-  container.querySelectorAll("[data-action]").forEach((el) => {
-    el.addEventListener("click", async (ev) => {
+function accountCard(t, index) {
+  const id = t.id;
+  return `
+  <div class="acct-card" data-task-card="1" data-task-id="${id}">
+    <!-- Header -->
+    <div class="acct-header">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="acct-index">#${index}</span>
+        <input class="input" style="max-width:10rem;font-weight:600" data-field="name" value="${esc(t.name)}" placeholder="账号名称" />
+        <span class="text-[10px] font-mono text-gray-300 truncate hidden sm:inline">${id}</span>
+        <label class="switch-label" title="启用">
+          <span class="switch"><input type="checkbox" class="switch-input" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span>
+        </label>
+      </div>
+      <div class="flex items-center gap-1 flex-shrink-0">
+        <button class="btn btn-primary text-[11px]" data-action="test-buy" data-task-id="${id}">BUY</button>
+        <button class="btn btn-ghost text-[11px]" data-action="test-sell" data-task-id="${id}">SELL</button>
+        <button class="btn btn-ghost text-[11px]" onclick="promptImportCurl('${id}')">cURL</button>
+        <button class="btn btn-danger text-[11px]" data-action="delete" data-task-id="${id}">✕</button>
+      </div>
+    </div>
+
+    <!-- Row 1: API URL + Method -->
+    <div class="acct-row">
+      <div class="flex-1">
+        <label class="label">API URL</label>
+        <input class="input" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." />
+      </div>
+      <div style="width:5rem">
+        <label class="label">Method</label>
+        <select class="input" data-field="method">
+          ${["GET","POST","PUT","DELETE"].map(m => `<option ${t.method===m?"selected":""}>${m}</option>`).join("")}
+        </select>
+      </div>
+      <div style="width:8rem">
+        <label class="label">代理</label>
+        <input class="input" data-field="httpProxyUrl" value="${esc(t.httpProxyUrl)}" placeholder="可选" />
+      </div>
+    </div>
+
+    <!-- Row 2: Time Ranges (highlighted) -->
+    <div class="acct-row items-start">
+      <div class="flex-1">
+        <label class="label">⏰ 有效时间段 <span class="tag tag-muted">留空=全天</span></label>
+        <div class="time-ranges" data-time-ranges="1" data-task-id="${id}">
+          ${renderTimeRanges(id, t.timeRanges)}
+        </div>
+        <button class="btn btn-ghost text-[10px] mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
+      </div>
+      <div style="width:10rem">
+        <label class="label">Symbol过滤</label>
+        <input class="input" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT" />
+      </div>
+    </div>
+
+    <!-- Row 3: Headers + Body (collapsible by default if empty) -->
+    <details class="acct-details" ${t.headers || t.body ? "open" : ""}>
+      <summary class="text-[11px] text-gray-500 cursor-pointer select-none">Headers & Body</summary>
+      <div class="grid gap-2 sm:grid-cols-2 mt-1.5">
+        <div>
+          <label class="label">Headers <span class="tag tag-muted">一行一个</span></label>
+          <textarea class="input" rows="3" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea>
+        </div>
+        <div>
+          <label class="label">Body <span class="tag tag-muted">{{action}} {{amount}} {{unit}} {{symbol}}</span></label>
+          <textarea class="input" rows="3" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea>
+        </div>
+      </div>
+    </details>
+
+    <!-- Row 4: valueBuy/Sell + skip + expires -->
+    <div class="acct-row">
+      <div style="width:6rem">
+        <label class="label">buy→</label>
+        <input class="input" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" />
+      </div>
+      <div style="width:6rem">
+        <label class="label">sell→</label>
+        <input class="input" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" />
+      </div>
+      <div style="width:5rem">
+        <label class="label">跳过N次</label>
+        <input type="number" min="0" class="input" data-field="skipSignals" value="${t.skipSignals||0}" />
+      </div>
+      <div class="flex-1">
+        <label class="label">过期提醒</label>
+        <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
+        <div class="expires-row">
+          <span class="expires-display" id="expires-display-${id}">${fmtDT(t.expiresAt)}</span>
+          <div class="expires-btns">
+            <button class="expires-btn" onclick="setExpiresDays('${id}',1)">+1d</button>
+            <button class="expires-btn" onclick="setExpiresDays('${id}',3)">+3d</button>
+            <button class="expires-btn" onclick="setExpiresDays('${id}',7)">+7d</button>
+          </div>
+          <button class="expires-clear" onclick="setExpiresDays('${id}',0)">清除</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function bindCardEvents(container) {
+  container.querySelectorAll("[data-action]").forEach(el => {
+    el.addEventListener("click", async ev => {
       const btn = ev.currentTarget;
       const action = btn.getAttribute("data-action");
       const taskId = btn.getAttribute("data-task-id");
       if (!taskId) return;
 
       if (action === "delete") {
-        stateTasks = collectTasksFromDom().filter((x) => x.id !== taskId);
+        stateTasks = collectTasksFromDom().filter(x => x.id !== taskId);
         renderTasks(stateTasks);
         return;
       }
-
       if (action === "add-time-range") {
         stateTasks = collectTasksFromDom();
-        try {
-          updateTaskTimeRanges(taskId, (ranges) => {
-            if (ranges.length >= 4) {
-              throw new Error("每个任务最多只能配置 4 个时间段");
-            }
-            return [...ranges, { start: "", end: "" }];
-          });
-        } catch (err) {
-          appendLog({
-            time: new Date().toISOString(),
-            level: "ERROR",
-            source: "ui",
-            message: err.message,
-          });
-          return;
-        }
+        try { updateTaskTimeRanges(taskId, r => r.length>=4 ? (()=>{throw new Error("最多4段")})() : [...r,{start:"",end:""}]); }
+        catch(e) { appendLog({level:"ERROR",source:"ui",message:e.message}); return; }
         renderTasks(stateTasks);
         return;
       }
-
       if (action === "delete-time-range") {
-        const index = Number(btn.getAttribute("data-index") || -1);
+        const idx = Number(btn.getAttribute("data-index")||-1);
         stateTasks = collectTasksFromDom();
-        updateTaskTimeRanges(taskId, (ranges) => ranges.filter((_, i) => i !== index));
+        updateTaskTimeRanges(taskId, r => r.filter((_,i) => i!==idx));
         renderTasks(stateTasks);
         return;
       }
-
       if (action === "test-buy" || action === "test-sell") {
-        const testAction = action === "test-buy" ? "buy" : "sell";
+        const act = action === "test-buy" ? "buy" : "sell";
         try {
-          await apiPost("/api/tasks/test", { taskId, action: testAction });
-          appendLog({
-            time: new Date().toISOString(),
-            level: "INFO",
-            source: "ui",
-            message: `任务测试下单已发送 task=${taskId} action=${testAction}`,
-          });
-        } catch (err) {
-          appendLog({
-            time: new Date().toISOString(),
-            level: "ERROR",
-            source: "ui",
-            message: `任务测试下单失败 task=${taskId}: ${err.message}`,
-          });
+          await apiPost("/api/tasks/test", { taskId, action: act });
+          appendLog({ level:"INFO", source:"ui", message:`测试 ${act} → ${taskId}` });
+        } catch(e) {
+          appendLog({ level:"ERROR", source:"ui", message:`测试失败: ${e.message}` });
         }
         return;
       }
     });
   });
 
-  container.querySelectorAll("[data-time-range-field]").forEach((el) => {
-    el.addEventListener("change", (ev) => {
-      const input = ev.currentTarget;
-      const currentTaskID = input.getAttribute("data-task-id");
-      const index = Number(input.getAttribute("data-index") || -1);
-      const field = input.getAttribute("data-time-range-field");
-      if (!currentTaskID || index < 0 || !field) return;
-
+  container.querySelectorAll("[data-time-range-field]").forEach(el => {
+    el.addEventListener("change", ev => {
+      const inp = ev.currentTarget;
+      const tid = inp.getAttribute("data-task-id");
+      const idx = Number(inp.getAttribute("data-index")||-1);
+      const field = inp.getAttribute("data-time-range-field");
+      if (!tid || idx<0 || !field) return;
       stateTasks = collectTasksFromDom();
-      updateTaskTimeRanges(currentTaskID, (ranges) =>
-        ranges.map((item, i) => (i === index ? { ...item, [field]: input.value } : item)),
-      );
+      updateTaskTimeRanges(tid, r => r.map((item,i) => i===idx ? {...item,[field]:inp.value} : item));
     });
   });
 }
 
-function formatDateTimeLocal(unixSec) {
-  if (!unixSec) return "未设置";
-  const d = new Date(unixSec * 1000);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// ── Time ranges ───────────────────────────────────
+
+function renderTimeRanges(taskId, ranges) {
+  const list = normalizeTimeRanges(ranges);
+  if (list.length === 0) return '<div class="time-range-empty">全天</div>';
+  return list.map((item, i) => `
+    <div class="time-range-row">
+      <select class="input" data-time-range-field="start" data-task-id="${taskId}" data-index="${i}">${hourOpts(item.start)}</select>
+      <span class="time-range-sep">→</span>
+      <select class="input" data-time-range-field="end" data-task-id="${taskId}" data-index="${i}">${hourOpts(item.end)}</select>
+      <button class="btn btn-danger text-[10px]" data-action="delete-time-range" data-task-id="${taskId}" data-index="${i}">✕</button>
+    </div>`).join("");
 }
 
-function taskCardHtml(t) {
-  const id = escapeHtml(t.id);
-  const name = escapeHtml(t.name);
-  const enabledChecked = t.enabled ? "checked" : "";
-  const dtLocal = formatDateTimeLocal(t.expiresAt);
-  const timeRangesHtml = renderTimeRanges(id, t.timeRanges);
-
-  return `
-  <div class="task-card" data-task-card="1" data-task-id="${id}">
-    <!-- Header -->
-    <div class="task-header">
-      <div class="task-meta">
-        <input class="input" style="max-width:12rem" data-field="name" value="${name}" placeholder="账号名称" />
-        <span class="text-[11px] font-mono text-gray-400">${id}</span>
-        <div id="countdown-${id}" class="countdown hidden"></div>
-        <label class="switch-label" title="启用账号">
-          <span class="text-xs text-gray-500">启用</span>
-          <span class="switch">
-            <input type="checkbox" class="switch-input" data-field="enabled" ${enabledChecked} />
-            <span class="switch-track"></span>
-          </span>
-        </label>
-      </div>
-      <div class="task-actions">
-        <button type="button" class="btn btn-primary" data-action="test-buy" data-task-id="${id}">测试 BUY</button>
-        <button type="button" class="btn btn-ghost" data-action="test-sell" data-task-id="${id}">测试 SELL</button>
-        <button type="button" class="btn btn-ghost" onclick="promptImportCurl('${id}')">导入 cURL</button>
-        <button type="button" class="btn btn-danger" data-action="delete" data-task-id="${id}">删除账号</button>
-      </div>
-    </div>
-
-    <!-- Request config -->
-    <div class="grid gap-3 mt-1" style="grid-template-columns: 7rem 1fr">
-      <div>
-        <label class="label">Method</label>
-        <select class="input" data-field="method">
-          <option value="GET" ${t.method === 'GET' ? 'selected' : ''}>GET</option>
-          <option value="POST" ${t.method === 'POST' ? 'selected' : ''}>POST</option>
-          <option value="PUT" ${t.method === 'PUT' ? 'selected' : ''}>PUT</option>
-          <option value="DELETE" ${t.method === 'DELETE' ? 'selected' : ''}>DELETE</option>
-        </select>
-      </div>
-      <div>
-        <label class="label">API URL <span class="tag">必填</span></label>
-        <input class="input" data-field="apiUrl" placeholder="https://..." value="${escapeHtml(t.apiUrl)}" />
-      </div>
-    </div>
-
-    <div class="grid gap-3 sm:grid-cols-2 mt-3">
-      <div>
-        <label class="label">Headers</label>
-        <p class="hint">一行一个 Key: Value</p>
-        <textarea rows="5" class="input" data-field="headers" placeholder="Content-Type: application/json">${escapeHtml(t.headers)}</textarea>
-      </div>
-      <div>
-        <label class="label">Body</label>
-        <p class="hint">变量: {{amount}}, {{unit}}, {{action}}, {{symbol}}, {{tickerType}}</p>
-        <textarea rows="5" class="input" data-field="body" placeholder='{"amount": "{{amount}}"}'>${escapeHtml(t.body)}</textarea>
-      </div>
-    </div>
-
-    <div class="grid gap-3 sm:grid-cols-2 mt-3">
-      <div>
-        <label class="label">action=buy 替换为 <span class="tag tag-muted">可选</span></label>
-        <input class="input" data-field="valueBuy" value="${escapeHtml(t.valueBuy)}" placeholder="LONG" />
-      </div>
-      <div>
-        <label class="label">action=sell 替换为 <span class="tag tag-muted">可选</span></label>
-        <input class="input" data-field="valueSell" value="${escapeHtml(t.valueSell)}" placeholder="SHORT" />
-      </div>
-    </div>
-
-    <div class="grid gap-3 sm:grid-cols-2 mt-3">
-      <div>
-        <label class="label">跳过前 N 次信号</label>
-        <input type="number" min="0" class="input" data-field="skipSignals" value="${t.skipSignals || 0}" />
-      </div>
-      <div>
-        <label class="label">代理 <span class="tag tag-muted">可选</span></label>
-        <input class="input" data-field="httpProxyUrl" value="${escapeHtml(t.httpProxyUrl)}" placeholder="http://127.0.0.1:7890" />
-      </div>
-    </div>
-
-    <div class="mt-3">
-      <label class="label">触发时间段 <span class="tag tag-muted">可选，留空=全天</span></label>
-      <p class="hint">最多 4 段，仅支持整点配置，支持跨午夜，如 22:00-06:00。</p>
-      <div class="time-ranges" data-time-ranges="1" data-task-id="${id}">
-        ${timeRangesHtml}
-      </div>
-      <button type="button" class="btn btn-ghost mt-2" data-action="add-time-range" data-task-id="${id}">+ 添加时间段</button>
-    </div>
-
-    <div class="grid gap-3 sm:grid-cols-2 mt-3">
-      <div>
-        <label class="label">允许交易对 <span class="tag tag-muted">可选</span></label>
-        <input class="input" data-field="allowedSymbols" value="${escapeHtml(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT (留空=全部)" />
-      </div>
-      <div>
-        <label class="label">过期提醒 <span class="tag tag-muted">可选</span></label>
-        <input type="hidden" data-field="expiresAt" value="${t.expiresAt || 0}" />
-        <div class="expires-row">
-          <span class="expires-display" id="expires-display-${id}">${dtLocal}</span>
-          <div class="expires-btns">
-            <button type="button" class="expires-btn" onclick="setExpiresDays('${id}', 1)">+1d</button>
-            <button type="button" class="expires-btn" onclick="setExpiresDays('${id}', 3)">+3d</button>
-            <button type="button" class="expires-btn" onclick="setExpiresDays('${id}', 7)">+7d</button>
-          </div>
-          <button type="button" class="expires-clear" onclick="setExpiresDays('${id}', 0)">清除</button>
-        </div>
-      </div>
-    </div>
-  </div>
-  `;
-}
-
-function collectTasksFromDom() {
-  const cards = document.querySelectorAll('[data-task-card="1"]');
-  const tasks = [];
-  cards.forEach((card) => {
-    const taskId = card.getAttribute("data-task-id") || randomId("task");
-    const get = (field) => {
-      const el = card.querySelector(`[data-field="${field}"]`);
-      return el ? el.value : "";
-    };
-    const getChecked = (field) => {
-      const el = card.querySelector(`[data-field="${field}"]`);
-      return !!(el && el.checked);
-    };
-    
-    let expiresSec = 0;
-    const expVal = get("expiresAt");
-    if (expVal) {
-      expiresSec = Number(expVal) || 0;
-    }
-
-    tasks.push({
-      id: taskId,
-      name: String(get("name") || "").trim() || taskId,
-      enabled: getChecked("enabled"),
-      skipSignals: Number(get("skipSignals") || 0) || 0,
-      timeRanges: collectTimeRangesFromCard(card),
-      expiresAt: expiresSec,
-      allowedSymbols: String(get("allowedSymbols") || "").trim(),
-      httpProxyUrl: String(get("httpProxyUrl") || "").trim(),
-      apiUrl: String(get("apiUrl") || "").trim(),
-      method: String(get("method") || "POST").trim().toUpperCase(),
-      headers: String(get("headers") || ""),
-      body: String(get("body") || ""),
-      valueBuy: String(get("valueBuy") || "").trim(),
-      valueSell: String(get("valueSell") || "").trim(),
-    });
-  });
-  return tasks;
+function hourOpts(sel) {
+  const v = String(sel||"").trim();
+  let o = '<option value="">--</option>';
+  for (let h=0; h<24; h++) {
+    const val = `${String(h).padStart(2,"0")}:00`;
+    o += `<option value="${val}" ${val===v?"selected":""}>${val}</option>`;
+  }
+  return o;
 }
 
 function normalizeTimeRanges(ranges) {
   if (!Array.isArray(ranges)) return [];
-  return ranges.map((item) => ({
-    start: String(item?.start || "").trim(),
-    end: String(item?.end || "").trim(),
-  }));
+  return ranges.map(r => ({ start: String(r?.start||"").trim(), end: String(r?.end||"").trim() }));
 }
 
 function compactTimeRanges(ranges) {
-  return normalizeTimeRanges(ranges).filter((item) => item.start || item.end);
-}
-
-function renderTimeRanges(taskId, ranges) {
-  const list = normalizeTimeRanges(ranges);
-  if (list.length === 0) {
-    return '<div class="time-range-empty">未配置时间段，默认全天允许触发。</div>';
-  }
-  return list
-    .map((item, index) => `
-      <div class="time-range-row">
-        <select class="input" data-time-range-field="start" data-task-id="${taskId}" data-index="${index}">
-          ${renderHourOptions(item.start)}
-        </select>
-        <span class="time-range-sep">至</span>
-        <select class="input" data-time-range-field="end" data-task-id="${taskId}" data-index="${index}">
-          ${renderHourOptions(item.end)}
-        </select>
-        <button type="button" class="btn btn-danger" data-action="delete-time-range" data-task-id="${taskId}" data-index="${index}">删除</button>
-      </div>
-    `)
-    .join("");
-}
-
-function renderHourOptions(selectedValue) {
-  const normalizedValue = String(selectedValue || "").trim();
-  const options = ['<option value="">请选择</option>'];
-  for (let hour = 0; hour < 24; hour += 1) {
-    const value = `${String(hour).padStart(2, "0")}:00`;
-    const selected = value === normalizedValue ? "selected" : "";
-    options.push(`<option value="${value}" ${selected}>${value}</option>`);
-  }
-  return options.join("");
+  return normalizeTimeRanges(ranges).filter(r => r.start || r.end);
 }
 
 function collectTimeRangesFromCard(card) {
   const rows = card.querySelectorAll("[data-time-range-field='start']");
-  const ranges = [];
-  rows.forEach((startInput) => {
-    const index = startInput.getAttribute("data-index");
-    const endInput = card.querySelector(`[data-time-range-field="end"][data-index="${cssEscape(index)}"]`);
-    ranges.push({
-      start: String(startInput.value || "").trim(),
-      end: String(endInput?.value || "").trim(),
-    });
+  const out = [];
+  rows.forEach(s => {
+    const i = s.getAttribute("data-index");
+    const e = card.querySelector(`[data-time-range-field="end"][data-index="${cssEscape(i)}"]`);
+    out.push({ start: String(s.value||"").trim(), end: String(e?.value||"").trim() });
   });
-  return normalizeTimeRanges(ranges);
+  return out;
 }
 
 function updateTaskTimeRanges(taskId, updater) {
-  const task = stateTasks.find((item) => item.id === taskId);
-  if (!task) return;
-  const nextRanges = updater(normalizeTimeRanges(task.timeRanges));
-  task.timeRanges = normalizeTimeRanges(nextRanges);
+  const t = stateTasks.find(x => x.id === taskId);
+  if (!t) return;
+  t.timeRanges = normalizeTimeRanges(updater(normalizeTimeRanges(t.timeRanges)));
 }
 
+// ── Collect from DOM ──────────────────────────────
+
+function collectTasksFromDom() {
+  return [...document.querySelectorAll('[data-task-card="1"]')].map(card => {
+    const id = card.getAttribute("data-task-id") || randomId("acct");
+    const g = f => { const e = card.querySelector(`[data-field="${f}"]`); return e ? e.value : ""; };
+    const gc = f => { const e = card.querySelector(`[data-field="${f}"]`); return !!(e && e.checked); };
+    let exp = Number(g("expiresAt")||0)||0;
+    return {
+      id, name: String(g("name")||"").trim()||id,
+      enabled: gc("enabled"),
+      skipSignals: Number(g("skipSignals")||0)||0,
+      timeRanges: collectTimeRangesFromCard(card),
+      allowedSymbols: String(g("allowedSymbols")||"").trim(),
+      expiresAt: exp,
+      httpProxyUrl: String(g("httpProxyUrl")||"").trim(),
+      apiUrl: String(g("apiUrl")||"").trim(),
+      method: String(g("method")||"POST").trim().toUpperCase(),
+      headers: String(g("headers")||""),
+      body: String(g("body")||""),
+      valueBuy: String(g("valueBuy")||"").trim(),
+      valueSell: String(g("valueSell")||"").trim(),
+    };
+  });
+}
+
+// ── Validation ────────────────────────────────────
+
 function validateTasks(tasks) {
-  tasks.forEach((task) => {
-    if (!task.apiUrl) {
-      throw new Error(`账号[${task.name}] 的 API URL 不能为空`);
-    }
-    validateTimeRanges(task);
+  tasks.forEach(t => {
+    if (!t.apiUrl) throw new Error(`账号[${t.name}] API URL 为空`);
+    validateTimeRanges(t);
   });
 }
 
 function validateTimeRanges(task) {
-  const ranges = compactTimeRanges(task.timeRanges);
-  if (ranges.length > 4) {
-    throw new Error(`账号[${task.name}] 最多只能配置 4 个时间段`);
-  }
-
-  ranges.forEach((range, index) => {
-    const label = `账号[${task.name}] 时间段#${index + 1}`;
-    if (!range.start || !range.end) {
-      throw new Error(`${label} 必须同时填写开始和结束时间`);
-    }
-
-    const startMinute = parseMinuteOfDay(range.start, label);
-    const endMinute = parseMinuteOfDay(range.end, label);
-    if (startMinute === endMinute) {
-      throw new Error(`${label} 的开始和结束时间不能相同`);
-    }
+  const r = compactTimeRanges(task.timeRanges);
+  if (r.length > 4) throw new Error(`账号[${task.name}] 最多4个时间段`);
+  r.forEach((range, i) => {
+    const lbl = `账号[${task.name}] 时段#${i+1}`;
+    if (!range.start || !range.end) throw new Error(`${lbl} 起止时间必填`);
+    const sm = parseMin(range.start, lbl), em = parseMin(range.end, lbl);
+    if (sm === em) throw new Error(`${lbl} 起止时间不能相同`);
   });
 }
 
-function parseMinuteOfDay(value, label) {
-  if (!/^\d{2}:\d{2}$/.test(value)) {
-    throw new Error(`${label} 必须使用 HH:00 格式`);
-  }
-  const [hourStr, minuteStr] = value.split(":");
-  const hour = Number(hourStr);
-  const minute = Number(minuteStr);
-  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-    throw new Error(`${label} 时间格式非法`);
-  }
-  if (minute !== 0) {
-    throw new Error(`${label} 只支持整点配置`);
-  }
-  return hour * 60 + minute;
+function parseMin(v, lbl) {
+  if (!/^\d{2}:\d{2}$/.test(v)) throw new Error(`${lbl} 需HH:00格式`);
+  const [h,m] = v.split(":").map(Number);
+  if (h<0||h>23||m!==0) throw new Error(`${lbl} 仅支持整点`);
+  return h*60+m;
 }
 
-function promptImportCurl(taskId) {
-  const curlStr = prompt("请粘贴 curl 命令 (支持从浏览器网络面板 Copy as cURL)");
-  if (!curlStr) return;
+// ── WS Status ─────────────────────────────────────
 
+async function updateWSStatus() {
   try {
-    const parsed = parseCurl(curlStr);
-    const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
-    if (!card) return;
-    const set = (field, value) => {
-      const el = card.querySelector(`[data-field="${field}"]`);
-      if (el) el.value = value == null ? "" : String(value);
-    };
-
-    if (parsed.url) set("apiUrl", parsed.url);
-    if (parsed.method) set("method", parsed.method);
-    if (parsed.headers) set("headers", parsed.headers);
-    if (parsed.body) set("body", parsed.body);
-    
-    appendLog({ level: "INFO", source: "ui", message: `已成功导入 cURL 到任务[${taskId}]，请检查并保存。` });
-  } catch (e) {
-    alert("解析 cURL 失败: " + e.message);
-  }
-}
-
-function parseCurl(curlStr) {
-  const result = { method: "GET", url: "", headers: "", body: "" };
-  // Replace line continuations
-  let str = curlStr.replace(/\\\r?\n/g, ' ');
-
-  // Extract URL
-  const urlMatch = str.match(/https?:\/\/[^\s'"]+/i);
-  if (urlMatch) {
-    result.url = urlMatch[0].replace(/[`]/g, '');
-  }
-
-  // Extract Method
-  const methodMatch = str.match(/(?:-X|--request)\s+['"]?([A-Za-z]+)['"]?/);
-  if (methodMatch) {
-    result.method = methodMatch[1].toUpperCase();
-  }
-
-  let headers = [];
-  
-  // Extract Headers (-H, --header)
-  const headerRegex = /(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/gi;
-  let match;
-  while ((match = headerRegex.exec(str)) !== null) {
-    let h = match[2] || match[3] || "";
-    headers.push(h.replace(/`/g, '').trim());
-  }
-
-  // Extract Cookies (-b, --cookie) and append as Header
-  const cookieRegex = /(?:-b|--cookie)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/gi;
-  while ((match = cookieRegex.exec(str)) !== null) {
-    let c = match[2] || match[3] || "";
-    c = c.replace(/`/g, '').trim();
-    if (c) {
-      headers.push(`Cookie: ${c}`);
+    const s = await apiGet("/api/ws/status");
+    // Server conns
+    const se = document.getElementById("ws-server-status");
+    if (se) {
+      const sp = se.querySelector("span");
+      const n = s.wsServerConns||0;
+      if (sp) sp.textContent = n;
+      se.className = "status-badge "+(n>0?"status-on":"status-off")+" text-[11px]";
     }
-  }
-
-  result.headers = headers.join('\n');
-
-  // Extract Body (-d, --data, --data-raw, --data-binary)
-  const bodyRegex = /(?:-d|--data|--data-raw|--data-binary)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^"\\]*)*)")/i;
-  const bodyMatch = str.match(bodyRegex);
-  if (bodyMatch) {
-    result.body = bodyMatch[2] || bodyMatch[3] || "";
-    if (!methodMatch) result.method = "POST";
-  }
-
-  return result;
-}
-
-function setExpiresDays(taskId, days) {
-  const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
-  if (!card) return;
-  const input = card.querySelector(`[data-field="expiresAt"]`);
-  const display = document.getElementById(`expires-display-${taskId}`);
-  if (!input || !display) return;
-
-  let newExpires = 0;
-  if (days > 0) {
-    const nowSec = Math.floor(Date.now() / 1000);
-    let currentExpires = Number(input.value) || 0;
-    
-    // 如果当前没有设置，或者已经过期，则以当前时间为基准累加
-    if (currentExpires < nowSec) {
-      currentExpires = nowSec;
+    // Upstream status
+    const ue = document.getElementById("ws-status");
+    if (ue && s.connected !== undefined) {
+      ue.style.display = "";
+      const up = ue.querySelector("span");
+      if (up) up.textContent = s.connected ? "已连接" : "未连接";
+      ue.className = "status-badge "+(s.connected?"status-on":"status-off")+" text-[11px]";
     }
-    
-    newExpires = currentExpires + (days * 24 * 3600);
-  }
-
-  input.value = newExpires;
-  display.textContent = formatDateTimeLocal(newExpires);
-
-  // Update state task so interval works immediately
-  const t = stateTasks.find(x => x.id === taskId);
-  if (t) t.expiresAt = newExpires;
-  
-  updateCountdown(taskId, null, newExpires);
+  } catch(e) { console.error("status", e); }
 }
 
-window.setExpiresDays = setExpiresDays;
+function updateWSEndpoint() {
+  const el = document.getElementById("wsServerEndpoint");
+  if (!el) return;
+  const path = getValue("wsServerPath") || "/ws";
+  const key = getValue("wsServerKey") || "";
+  let url = location.origin + path;
+  if (key) url += "?key=" + encodeURIComponent(key);
+  el.textContent = url;
+}
 
-let countdownInterval = null;
+function copyWSEndpoint() {
+  const t = document.getElementById("wsServerEndpoint")?.textContent || "";
+  navigator.clipboard.writeText(t).then(() => {
+    appendLog({ level:"INFO", source:"ui", message:"地址已复制" });
+  }).catch(() => prompt("复制:", t));
+}
+
+// ── Countdown ─────────────────────────────────────
+
+let cdInterval = null;
 
 function initCountdowns() {
-  if (countdownInterval) {
-    clearInterval(countdownInterval);
-  }
-  countdownInterval = setInterval(() => {
-    stateTasks.forEach(task => {
-      updateCountdown(task.id, null, task.expiresAt);
-    });
+  if (cdInterval) clearInterval(cdInterval);
+  cdInterval = setInterval(() => {
+    stateTasks.forEach(t => updateCountdown(t.id, t.expiresAt));
   }, 1000);
 }
 
-function updateCountdown(taskId, _unused, timestamp) {
+function updateCountdown(taskId, ts) {
   const el = document.getElementById(`countdown-${taskId}`);
   if (!el) return;
-
-  let expiresSec = timestamp || 0;
-  if (!expiresSec) {
-    el.classList.add("hidden");
-    return;
-  }
-
-  el.classList.remove("hidden");
-  const now = Math.floor(Date.now() / 1000);
-  const diff = expiresSec - now;
-
-  el.classList.remove("countdown-normal", "countdown-warn", "countdown-danger", "animate-pulse");
-
-  if (diff <= 0) {
-    el.textContent = "已过期";
-    el.classList.add("countdown-danger", "animate-pulse");
-  } else {
-    const h = Math.floor(diff / 3600);
-    const m = Math.floor((diff % 3600) / 60);
-    const s = diff % 60;
-    
-    if (h > 24) {
-      const d = Math.floor(h / 24);
-      el.textContent = `${d}天 ${h%24}时`;
-      el.classList.add("countdown-normal");
-    } else if (h >= 1) {
-      el.textContent = `${h}时 ${m}分`;
-      el.classList.add("countdown-normal");
-    } else {
-      el.textContent = `${m}分 ${s}秒`;
-      el.classList.add("countdown-warn");
-      if (diff < 300) {
-        el.classList.replace("countdown-warn", "countdown-danger");
-        el.classList.add("animate-pulse");
-      }
-    }
-  }
+  const sec = ts || 0;
+  if (!sec) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden","countdown-normal","countdown-warn","countdown-danger","animate-pulse");
+  const diff = sec - Math.floor(Date.now()/1000);
+  if (diff <= 0) { el.textContent="已过期"; el.classList.add("countdown-danger","animate-pulse"); return; }
+  const h=Math.floor(diff/3600), m=Math.floor((diff%3600)/60);
+  if (h>24) { const d=Math.floor(h/24); el.textContent=`${d}d${h%24}h`; el.classList.add("countdown-normal"); }
+  else if (h>=1) { el.textContent=`${h}h${m}m`; el.classList.add("countdown-normal"); }
+  else { el.textContent=`${m}m${diff%60}s`; el.classList.add("countdown-warn"); }
 }
 
 window.updateCountdown = updateCountdown;
 
+// ── Expires ───────────────────────────────────────
 
-function randomId(prefix) {
+function setExpiresDays(taskId, days) {
+  const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
+  if (!card) return;
+  const inp = card.querySelector('[data-field="expiresAt"]');
+  const disp = document.getElementById(`expires-display-${taskId}`);
+  if (!inp || !disp) return;
+  let v = 0;
+  if (days > 0) {
+    const now = Math.floor(Date.now()/1000);
+    let cur = Number(inp.value)||0;
+    if (cur < now) cur = now;
+    v = cur + days*86400;
+  }
+  inp.value = v;
+  disp.textContent = fmtDT(v);
+  const t = stateTasks.find(x => x.id===taskId);
+  if (t) t.expiresAt = v;
+  updateCountdown(taskId, v);
+}
+
+window.setExpiresDays = setExpiresDays;
+
+function fmtDT(unix) {
+  if (!unix) return "未设置";
+  const d = new Date(unix*1000);
+  const p = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// ── cURL import ───────────────────────────────────
+
+function promptImportCurl(taskId) {
+  const s = prompt("粘贴 curl 命令:");
+  if (!s) return;
   try {
-    if (crypto && crypto.randomUUID) return crypto.randomUUID();
-  } catch {}
-  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    const p = parseCurl(s);
+    const card = document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(taskId)}"]`);
+    if (!card) return;
+    const set = (f,v) => { const e=card.querySelector(`[data-field="${f}"]`); if(e)e.value=v==null?"":String(v); };
+    if (p.url) set("apiUrl", p.url);
+    if (p.method) set("method", p.method);
+    if (p.headers) set("headers", p.headers);
+    if (p.body) set("body", p.body);
+    appendLog({ level:"INFO", source:"ui", message:`cURL → ${taskId}` });
+  } catch(e) { alert("解析失败: "+e.message); }
 }
 
-function cssEscape(text) {
-  // Minimal CSS escape for attribute selectors.
-  return String(text).replace(/"/g, '\\"');
+function parseCurl(s) {
+  const r = { method:"GET", url:"", headers:"", body:"" };
+  s = s.replace(/\\\r?\n/g," ");
+  const u = s.match(/https?:\/\/[^\s'"]+/i);
+  if (u) r.url = u[0].replace(/`/g,"");
+  const m = s.match(/(?:-X|--request)\s+['"]?([A-Za-z]+)['"]?/);
+  if (m) r.method = m[1].toUpperCase();
+  let hs = [];
+  const hr = /(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;
+  let h;
+  while ((h=hr.exec(s))!==null) hs.push((h[2]||h[3]||"").replace(/`/g,"").trim());
+  const cr = /(?:-b|--cookie)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;
+  while ((h=cr.exec(s))!==null) { const c=(h[2]||h[3]||"").replace(/`/g,"").trim(); if(c) hs.push("Cookie: "+c); }
+  r.headers = hs.join("\n");
+  const br = /(?:-d|--data|--data-raw|--data-binary)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/i;
+  const bm = s.match(br);
+  if (bm) { r.body = bm[2]||bm[3]||""; if (!m) r.method="POST"; }
+  return r;
 }
 
-
-function setValue(id, value) {
-  const el = document.getElementById(id);
-  if (el) el.value = value == null ? "" : String(value);
-}
-
-function getValue(id) {
-  const el = document.getElementById(id);
-  return el ? el.value : "";
-}
-
-function setChecked(id, checked) {
-  const el = document.getElementById(id);
-  if (el) el.checked = !!checked;
-}
-
-function isChecked(id) {
-  const el = document.getElementById(id);
-  return !!(el && el.checked);
-}
+// ── Logs ──────────────────────────────────────────
 
 function initLogs() {
-  const container = document.getElementById("log-container");
+  const c = document.getElementById("log-container");
   const es = new EventSource("/api/logs/stream");
-  es.onopen = () => {
-    // 每次连接成功（包括重连），清空一次界面日志，防止后端重复推送历史数据
-    if (container) container.innerHTML = "";
+  es.onopen = () => { if (c) c.innerHTML = ""; };
+  es.onmessage = ev => {
+    try { appendLog(JSON.parse(ev.data)); } catch(e) { console.error("log parse", e); }
   };
-  es.onmessage = (ev) => {
-    try {
-      const entry = JSON.parse(ev.data);
-      appendLog(entry);
-    } catch (e) {
-      console.error("parse log entry error", e, ev.data);
-    }
-  };
-  es.onerror = () => {
-    // 浏览器会自动重连，这里只在控制台打印，不打扰用户
-    console.debug("SSE logs stream disconnected, browser will auto-reconnect.");
-  };
+  es.onerror = () => console.debug("SSE reconnect");
 }
 
 function appendLog(entry) {
-  const container = document.getElementById("log-container");
-  if (!container) return;
-
+  const c = document.getElementById("log-container");
+  if (!c) return;
   const row = document.createElement("div");
   row.className = "flex gap-2 items-start text-[11px] leading-relaxed";
-
-  const timeStr = entry.time
-    ? new Date(entry.time).toLocaleTimeString("zh-CN", { hour12: false })
-    : new Date().toLocaleTimeString("zh-CN", { hour12: false });
-
-  const level = (entry.level || "INFO").toUpperCase();
-  const source = entry.source || "app";
-  const msg = entry.message || "";
-
-  const colorClass =
-    level === "ERROR"
-      ? "text-red-600"
-      : level === "DEBUG"
-      ? "text-blue-600"
-      : "text-green-700";
-
-  row.innerHTML = `
-    <span class="text-gray-400 shrink-0">${timeStr}</span>
-    <span class="shrink-0 ${colorClass}">[${level}]</span>
-    <span class="shrink-0 text-gray-400">${escapeHtml(source)}</span>
-    <span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${escapeHtml(msg)}</span>
-  `;
-
-  container.appendChild(row);
-  while (container.children.length > 500) {
-    container.removeChild(container.firstChild);
-  }
-  container.scrollTop = container.scrollHeight;
+  const ts = entry.time ? new Date(entry.time).toLocaleTimeString("zh-CN",{hour12:false}) : new Date().toLocaleTimeString("zh-CN",{hour12:false});
+  const lv = (entry.level||"INFO").toUpperCase();
+  const src = entry.source||"";
+  const msg = entry.message||"";
+  const cls = lv==="ERROR"?"text-red-600":lv==="DEBUG"?"text-blue-600":"text-green-700";
+  row.innerHTML = `<span class="text-gray-400 shrink-0">${ts}</span><span class="shrink-0 ${cls}">[${lv}]</span><span class="shrink-0 text-gray-400">${esc(src)}</span><span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${esc(msg)}</span>`;
+  c.appendChild(row);
+  while (c.children.length > 500) c.removeChild(c.firstChild);
+  c.scrollTop = c.scrollHeight;
 }
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+// ── Helpers ───────────────────────────────────────
+
+function randomId(p) {
+  try { if (crypto?.randomUUID) return crypto.randomUUID(); } catch {}
+  return `${p}-${Date.now()}-${Math.floor(Math.random()*1e6)}`;
 }
+
+function cssEscape(s) { return String(s).replace(/"/g,'\\"'); }
+function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+function setValue(id,v) { const e=document.getElementById(id); if(e) e.value = v==null?"":String(v); }
+function getValue(id) { const e=document.getElementById(id); return e?e.value:""; }
+function setChecked(id,v) { const e=document.getElementById(id); if(e) e.checked=!!v; }
+function isChecked(id) { const e=document.getElementById(id); return !!(e&&e.checked); }

@@ -240,7 +240,50 @@ textarea.input {
 .log-box::-webkit-scrollbar-thumb { background: rgba(174, 213, 129, 0.6); border-radius: 9999px; }
 .log-box::-webkit-scrollbar-track { background: transparent; }
 
-/* === Task card === */
+/* === Account card === */
+.acct-card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+}
+
+.acct-card .acct-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--green-light);
+  margin-bottom: 0.5rem;
+}
+
+.acct-card .acct-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  margin-top: 0.5rem;
+}
+
+.acct-card .acct-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  background: var(--green-light);
+  color: var(--green-text);
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.acct-card .acct-details {
+  margin-top: 0.5rem;
+}
+
+/* === Old task card (keep for fallback) === */
 .task-card {
   background: #fff;
   border: 1px solid #e5e7eb;
