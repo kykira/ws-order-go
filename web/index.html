@@ -30,13 +30,20 @@
 
         <!-- Toolbar -->
         <div class="flex items-center justify-between gap-3 flex-wrap">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-3">
             <button id="btn-ws-connect" type="button" class="btn btn-primary">连接 WS</button>
             <button id="btn-ws-disconnect" type="button" class="btn btn-ghost">断开</button>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500">分发</span>
+              <select id="dispatchMode" class="input text-xs" style="width:auto;padding:0.25rem 0.5rem">
+                <option value="random">随机选一</option>
+                <option value="all">全部执行</option>
+              </select>
+            </div>
           </div>
           <div class="flex items-center gap-2">
             <button id="btn-import-json" type="button" class="btn btn-ghost text-xs" title="从 config.json 文本粘贴恢复配置">导入 JSON</button>
-            <button id="btn-add-task" type="button" class="btn btn-ghost text-xs">+ 添加任务</button>
+            <button id="btn-add-task" type="button" class="btn btn-ghost text-xs">+ 添加账号</button>
             <button id="btn-save-config" type="button" class="btn btn-primary">保存配置</button>
           </div>
         </div>

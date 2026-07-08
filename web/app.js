@@ -55,6 +55,10 @@ async function loadConfig() {
     setChecked("wsServerApplySkip", !!wsServer.applySkip);
     updateWSEndpoint();
 
+    // Dispatch mode
+    const sel = document.getElementById("dispatchMode");
+    if (sel) sel.value = cfg.dispatch === "all" ? "all" : "random";
+
     stateTasks = normalizeTasks(cfg);
     renderTasks(stateTasks);
   } catch (err) {
@@ -157,6 +161,9 @@ function initActions() {
         setChecked("wsServerEnabled", wsServer.enabled !== false);
         setChecked("wsServerApplySkip", !!wsServer.applySkip);
         updateWSEndpoint();
+
+        const dispatchEl = document.getElementById("dispatchMode");
+        if (dispatchEl) dispatchEl.value = cfg.dispatch === "all" ? "all" : "random";
         
         stateTasks = normalizeTasks(cfg);
         renderTasks(stateTasks);
@@ -254,10 +261,13 @@ function collectConfigPayload() {
     applySkip: isChecked("wsServerApplySkip"),
   };
 
+  const dispatchEl = document.getElementById("dispatchMode");
+  const dispatch = dispatchEl ? dispatchEl.value : "random";
+
   const tasks = collectTasksFromDom().map(normalizeTask);
   validateTasks(tasks);
   stateTasks = tasks;
-  return { upstream, wsServer, tasks };
+  return { upstream, wsServer, dispatch, tasks };
 }
 
 function normalizeTasks(cfg) {
@@ -269,7 +279,7 @@ function normalizeTasks(cfg) {
     return [
         normalizeTask({
             id: "default",
-            name: "Default Task",
+            name: "Account 1",
             enabled: true,
             skipSignals: legacySkip,
             httpProxyUrl: "",
@@ -305,8 +315,8 @@ function normalizeTask(t) {
 
 function buildDefaultTask() {
   return normalizeTask({
-    id: randomId("task"),
-    name: "New Task",
+    id: randomId("acct"),
+    name: "New Account",
     enabled: true,
     skipSignals: 0,
     timeRanges: [],
@@ -327,7 +337,7 @@ function renderTasks(tasks) {
   if (!container) return;
   if (!Array.isArray(tasks) || tasks.length === 0) {
     container.innerHTML =
-      '<div class="card text-center text-xs text-gray-400 py-6">暂无任务，点击上方"+ 添加任务"。</div>';
+      '<div class="card text-center text-xs text-gray-400 py-6">暂无账号，点击上方"+ 添加账号"。</div>';
     return;
   }
 
@@ -437,10 +447,10 @@ function taskCardHtml(t) {
     <!-- Header -->
     <div class="task-header">
       <div class="task-meta">
-        <input class="input" style="max-width:12rem" data-field="name" value="${name}" placeholder="任务名称" />
+        <input class="input" style="max-width:12rem" data-field="name" value="${name}" placeholder="账号名称" />
         <span class="text-[11px] font-mono text-gray-400">${id}</span>
         <div id="countdown-${id}" class="countdown hidden"></div>
-        <label class="switch-label" title="启用任务">
+        <label class="switch-label" title="启用账号">
           <span class="text-xs text-gray-500">启用</span>
           <span class="switch">
             <input type="checkbox" class="switch-input" data-field="enabled" ${enabledChecked} />
@@ -452,7 +462,7 @@ function taskCardHtml(t) {
         <button type="button" class="btn btn-primary" data-action="test-buy" data-task-id="${id}">测试 BUY</button>
         <button type="button" class="btn btn-ghost" data-action="test-sell" data-task-id="${id}">测试 SELL</button>
         <button type="button" class="btn btn-ghost" onclick="promptImportCurl('${id}')">导入 cURL</button>
-        <button type="button" class="btn btn-danger" data-action="delete" data-task-id="${id}">删除任务</button>
+        <button type="button" class="btn btn-danger" data-action="delete" data-task-id="${id}">删除账号</button>
       </div>
     </div>
 
@@ -648,7 +658,7 @@ function updateTaskTimeRanges(taskId, updater) {
 function validateTasks(tasks) {
   tasks.forEach((task) => {
     if (!task.apiUrl) {
-      throw new Error(`任务[${task.name}] 的 API URL 不能为空`);
+      throw new Error(`账号[${task.name}] 的 API URL 不能为空`);
     }
     validateTimeRanges(task);
   });
@@ -657,11 +667,11 @@ function validateTasks(tasks) {
 function validateTimeRanges(task) {
   const ranges = compactTimeRanges(task.timeRanges);
   if (ranges.length > 4) {
-    throw new Error(`任务[${task.name}] 最多只能配置 4 个时间段`);
+    throw new Error(`账号[${task.name}] 最多只能配置 4 个时间段`);
   }
 
   ranges.forEach((range, index) => {
-    const label = `任务[${task.name}] 时间段#${index + 1}`;
+    const label = `账号[${task.name}] 时间段#${index + 1}`;
     if (!range.start || !range.end) {
       throw new Error(`${label} 必须同时填写开始和结束时间`);
     }

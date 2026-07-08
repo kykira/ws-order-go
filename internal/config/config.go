@@ -46,6 +46,7 @@ type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Upstream UpstreamConfig `json:"upstream"`
 	WSServer WSServerConfig `json:"wsServer"`
+	Dispatch string         `json:"dispatch"` // "all" or "random", default "random"
 	Tasks    []TaskConfig   `json:"tasks"`
 }
 
@@ -69,6 +70,7 @@ func DefaultConfig() Config {
 			Key:       "",
 			ApplySkip: false,
 		},
+		Dispatch: "random",
 		Tasks: []TaskConfig{
 			{
 				ID:           "default",

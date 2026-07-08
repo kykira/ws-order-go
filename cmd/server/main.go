@@ -112,6 +112,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 			var payload struct {
 				Upstream config.UpstreamConfig `json:"upstream"`
 				WSServer config.WSServerConfig `json:"wsServer"`
+				Dispatch string               `json:"dispatch"`
 				Tasks    []config.TaskConfig   `json:"tasks"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -132,6 +133,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 			if err := cfgMgr.Update(func(c *config.Config) {
 				c.Upstream = payload.Upstream
 				c.WSServer = payload.WSServer
+				c.Dispatch = payload.Dispatch
 				c.Tasks = payload.Tasks
 			}); err != nil {
 				logger.Error("config", fmt.Sprintf("update config error: %v", err))

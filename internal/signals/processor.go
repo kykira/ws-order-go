@@ -3,6 +3,7 @@ package signals
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -70,13 +71,17 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 	}
 
+	// Collect matching tasks
+	var matched []config.TaskConfig
+	var matchedRange string
+
 	for _, task := range cfg.Tasks {
 		if !task.Enabled {
 			continue
 		}
 
 		currentTime := time.Now()
-		allowedNow, matchedRange, err := config.IsTimeAllowed(task.TimeRanges, currentTime)
+		allowedNow, rangeDesc, err := config.IsTimeAllowed(task.TimeRanges, currentTime)
 		if err != nil {
 			p.logger.Error("signal", fmt.Sprintf("task=[%s] invalid time ranges, ignore signal: %v", task.Name, err))
 			continue
@@ -85,6 +90,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			p.logger.Info("signal", fmt.Sprintf("task=[%s] ignored by time ranges current=%s ranges=%s", task.Name, currentTime.Format("15:04"), config.FormatTimeRanges(task.TimeRanges)))
 			continue
 		}
+		matchedRange = rangeDesc
 
 		// Filter by AllowedSymbols
 		if strings.TrimSpace(task.AllowedSymbols) != "" {
@@ -103,46 +109,72 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		}
 
 		if applySkip && task.SkipSignals > 0 {
-			p.mu.Lock()
-			now := currentTime
-			// Reset if 30 minutes have passed since the first skipped signal for this task
-			if start, ok := p.skipStartTime[task.ID]; ok && now.Sub(start) > 30*time.Minute {
-				p.seenSkip[task.ID] = 0
-				delete(p.skipStartTime, task.ID)
-				p.logger.Info("signal", fmt.Sprintf("task=[%s] skip counter reset after 30m", task.Name))
-			}
-
-			// If we still need to skip
-			if p.seenSkip[task.ID] < task.SkipSignals {
-				if p.seenSkip[task.ID] == 0 {
-					p.skipStartTime[task.ID] = now
-				}
-				p.seenSkip[task.ID]++
-				p.logger.Info("signal", fmt.Sprintf("skip %d/%d from %s for task=[%s]", p.seenSkip[task.ID], task.SkipSignals, source, task.Name))
-				p.mu.Unlock()
+			if !p.checkSkip(task) {
 				continue
 			}
-			p.mu.Unlock()
 		}
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v task=[%s] action=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, task.Name, action, amount, unit, matchedRange))
+		matched = append(matched, task)
+	}
 
-		// Execute PlaceOrder asynchronously to avoid blocking other tasks
-		go func(t config.TaskConfig, req order.PlaceOrderRequest) {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+	if len(matched) == 0 {
+		return nil
+	}
 
-			if err := p.order.PlaceOrder(ctx, t, req); err != nil {
-				p.logger.Error("signal", fmt.Sprintf("task=[%s] order error: %v", t.Name, err))
-			}
-		}(task, order.PlaceOrderRequest{
-			Amount:     amount,
-			Unit:       unit,
-			Action:     action,
-			Symbol:     sig.Symbol,
-			TickerType: sig.TickerType,
-		})
+	// Dispatch: random pick one, or execute all
+	if cfg.Dispatch == "random" && len(matched) > 1 {
+		task := matched[rand.Intn(len(matched))]
+		p.logger.Info("signal", fmt.Sprintf("dispatch=random picked %d/%d account=[%s]", 1, len(matched), task.Name))
+		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+		return nil
+	}
+
+	// Default: execute all matched
+	for _, task := range matched {
+		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
 	}
 
 	return nil
+}
+
+func (p *Processor) checkSkip(task config.TaskConfig) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := time.Now()
+	// Reset if 30 minutes have passed since the first skipped signal for this task
+	if start, ok := p.skipStartTime[task.ID]; ok && now.Sub(start) > 30*time.Minute {
+		p.seenSkip[task.ID] = 0
+		delete(p.skipStartTime, task.ID)
+		p.logger.Info("signal", fmt.Sprintf("task=[%s] skip counter reset after 30m", task.Name))
+	}
+
+	if p.seenSkip[task.ID] < task.SkipSignals {
+		if p.seenSkip[task.ID] == 0 {
+			p.skipStartTime[task.ID] = now
+		}
+		p.seenSkip[task.ID]++
+		p.logger.Info("signal", fmt.Sprintf("skip %d/%d task=[%s]", p.seenSkip[task.ID], task.SkipSignals, task.Name))
+		return false
+	}
+	return true
+}
+
+func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfig, action, amount, unit, matchedRange string) {
+	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, task.Name, action, sig.Symbol, amount, unit, matchedRange))
+
+	go func(t config.TaskConfig, req order.PlaceOrderRequest) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := p.order.PlaceOrder(ctx, t, req); err != nil {
+			p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v", t.Name, err))
+		}
+	}(task, order.PlaceOrderRequest{
+		Amount:     amount,
+		Unit:       unit,
+		Action:     action,
+		Symbol:     sig.Symbol,
+		TickerType: sig.TickerType,
+	})
 }

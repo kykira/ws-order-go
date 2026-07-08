@@ -13,6 +13,7 @@
     "key": "",
     "applySkip": false
   },
+  "dispatch": "random",
   "tasks": [
     {
       "id": "task-proxy-test",
