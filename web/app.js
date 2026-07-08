@@ -42,9 +42,18 @@ async function loadConfig() {
   try {
     const cfg = await apiGet("/api/config");
 
+    // Upstream WS (legacy client mode)
     setValue("wsUrl", cfg.upstream?.wsUrl || "");
     setValue("wsKey", cfg.upstream?.wsKey || "");
     setChecked("wsEnabled", !!cfg.upstream?.enabled);
+
+    // WS Server (passive server mode)
+    const wsServer = cfg.wsServer || {};
+    setValue("wsServerPath", wsServer.path || "/ws");
+    setValue("wsServerKey", wsServer.key || "");
+    setChecked("wsServerEnabled", wsServer.enabled !== false);
+    setChecked("wsServerApplySkip", !!wsServer.applySkip);
+    updateWSEndpoint();
 
     stateTasks = normalizeTasks(cfg);
     renderTasks(stateTasks);
@@ -141,6 +150,13 @@ function initActions() {
         setValue("wsUrl", cfg.upstream?.wsUrl || "");
         setValue("wsKey", cfg.upstream?.wsKey || "");
         setChecked("wsEnabled", !!cfg.upstream?.enabled);
+
+        const wsServer = cfg.wsServer || {};
+        setValue("wsServerPath", wsServer.path || "/ws");
+        setValue("wsServerKey", wsServer.key || "");
+        setChecked("wsServerEnabled", wsServer.enabled !== false);
+        setChecked("wsServerApplySkip", !!wsServer.applySkip);
+        updateWSEndpoint();
         
         stateTasks = normalizeTasks(cfg);
         renderTasks(stateTasks);
@@ -180,10 +196,49 @@ async function updateWSStatus() {
     const connected = !!status.connected;
     span.textContent = connected ? "已连接" : "未连接";
     el.className = "status-badge " + (connected ? "status-on" : "status-off");
+
+    // WS Server connection count
+    const srvEl = document.getElementById("ws-server-status");
+    if (srvEl) {
+      const srvSpan = srvEl.querySelector("span");
+      const conns = status.wsServerConns || 0;
+      if (srvSpan) srvSpan.textContent = conns;
+      srvEl.style.display = "";
+      srvEl.className = "status-badge " + (conns > 0 ? "status-on" : "status-off");
+    }
   } catch (err) {
     console.error("updateWSStatus error", err);
   }
 }
+
+function updateWSEndpoint() {
+  const el = document.getElementById("wsServerEndpoint");
+  if (!el) return;
+  const path = getValue("wsServerPath") || "/ws";
+  const key = getValue("wsServerKey") || "";
+  let url = window.location.origin + path;
+  if (key) url += "?key=" + encodeURIComponent(key);
+  el.textContent = url;
+}
+
+function copyWSEndpoint() {
+  const el = document.getElementById("wsServerEndpoint");
+  if (!el) return;
+  const text = el.textContent || "";
+  navigator.clipboard.writeText(text).then(() => {
+    appendLog({ level: "INFO", source: "ui", message: "WS 接入地址已复制到剪贴板" });
+  }).catch(() => {
+    prompt("请手动复制以下地址:", text);
+  });
+}
+
+// Listen for wsServer field changes to update endpoint
+document.addEventListener("DOMContentLoaded", () => {
+  const pathEl = document.getElementById("wsServerPath");
+  const keyEl = document.getElementById("wsServerKey");
+  if (pathEl) pathEl.addEventListener("input", updateWSEndpoint);
+  if (keyEl) keyEl.addEventListener("input", updateWSEndpoint);
+});
 
 function collectConfigPayload() {
   const upstream = {
@@ -192,10 +247,17 @@ function collectConfigPayload() {
     enabled: isChecked("wsEnabled"),
   };
 
+  const wsServer = {
+    path: getValue("wsServerPath") || "/ws",
+    key: getValue("wsServerKey") || "",
+    enabled: isChecked("wsServerEnabled"),
+    applySkip: isChecked("wsServerApplySkip"),
+  };
+
   const tasks = collectTasksFromDom().map(normalizeTask);
   validateTasks(tasks);
   stateTasks = tasks;
-  return { upstream, tasks };
+  return { upstream, wsServer, tasks };
 }
 
 function normalizeTasks(cfg) {

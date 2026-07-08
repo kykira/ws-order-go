@@ -7,12 +7,20 @@
     "wsKey": "",
     "enabled": false
   },
+  "wsServer": {
+    "enabled": true,
+    "path": "/ws",
+    "key": "",
+    "applySkip": false
+  },
   "tasks": [
     {
       "id": "task-proxy-test",
       "name": "Proxy Test",
       "enabled": true,
       "skipSignals": 0,
+      "allowedSymbols": "",
+      "expiresAt": 0,
       "httpProxyUrl": "",
       "apiUrl": "https://api.ipify.org?format=json",
       "method": "GET",

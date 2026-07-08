@@ -18,6 +18,9 @@
             <div id="ws-status" class="status-badge status-off">
               WS: <span class="ml-1 font-medium">未知</span>
             </div>
+            <div id="ws-server-status" class="status-badge status-off" style="display:none">
+              接入: <span class="ml-1 font-medium">0</span>
+            </div>
           </div>
         </div>
       </header>
@@ -38,10 +41,51 @@
           </div>
         </div>
 
-        <!-- WS Config -->
+        <!-- WS Server Config -->
         <section class="card">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="section-title">上游 WebSocket</h2>
+            <h2 class="section-title">WS 服务端（被动接入）</h2>
+            <label class="switch-label" for="wsServerEnabled">
+              <span class="text-xs text-gray-500">启用</span>
+              <span class="switch">
+                <input id="wsServerEnabled" type="checkbox" class="switch-input" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label class="label" for="wsServerPath">WS 路径</label>
+              <input id="wsServerPath" type="text" class="input" placeholder="/ws" />
+            </div>
+            <div>
+              <label class="label" for="wsServerKey">接入密钥 <span class="tag tag-muted">可选</span></label>
+              <input id="wsServerKey" type="text" class="input" placeholder="留空=无验证" />
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="label" for="wsServerEndpoint">接入地址</label>
+            <div class="flex items-center gap-2">
+              <code id="wsServerEndpoint" class="flex-1 bg-gray-100 px-3 py-2 rounded text-xs font-mono text-gray-600 break-all"></code>
+              <button type="button" class="btn btn-ghost text-xs" onclick="copyWSEndpoint()">复制</button>
+            </div>
+          </div>
+          <div class="mt-3">
+            <label class="switch-label" for="wsServerApplySkip">
+              <span class="text-xs text-gray-500">应用跳过信号逻辑</span>
+              <span class="switch">
+                <input id="wsServerApplySkip" type="checkbox" class="switch-input" />
+                <span class="switch-track"></span>
+              </span>
+            </label>
+            <p class="hint mt-1">开启后，WS 服务端收到的信号也会应用各任务"跳过前 N 次信号"规则</p>
+          </div>
+        </section>
+
+        <!-- Upstream WS (legacy) -->
+        <section class="card">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="section-title">上游 WebSocket（主动连接，旧模式）</h2>
             <label class="switch-label" for="wsEnabled">
               <span class="text-xs text-gray-500">启用</span>
               <span class="switch">

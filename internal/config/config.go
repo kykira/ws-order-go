@@ -18,6 +18,13 @@ type UpstreamConfig struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type WSServerConfig struct {
+	Enabled   bool   `json:"enabled"`
+	Path      string `json:"path"`
+	Key       string `json:"key"`
+	ApplySkip bool   `json:"applySkip"`
+}
+
 type TaskConfig struct {
 	ID             string      `json:"id"`
 	Name           string      `json:"name"`
@@ -38,6 +45,7 @@ type TaskConfig struct {
 type Config struct {
 	Server   ServerConfig   `json:"server"`
 	Upstream UpstreamConfig `json:"upstream"`
+	WSServer WSServerConfig `json:"wsServer"`
 	Tasks    []TaskConfig   `json:"tasks"`
 }
 
@@ -54,6 +62,12 @@ func DefaultConfig() Config {
 			WSUrl:   "",
 			WSKey:   "",
 			Enabled: false,
+		},
+		WSServer: WSServerConfig{
+			Enabled:   true,
+			Path:      "/ws",
+			Key:       "",
+			ApplySkip: false,
 		},
 		Tasks: []TaskConfig{
 			{

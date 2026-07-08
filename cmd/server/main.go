@@ -32,24 +32,39 @@ func main() {
 	orderClient := order.NewClient(logger)
 	processor := signals.NewProcessor(cfgManager, logger, orderClient)
 	wsCli := wsclient.NewClient(cfgManager, logger, processor)
-	wsSrv := wsserver.NewServer(logger, processor)
+	wsSrv := wsserver.NewServer(cfgManager, logger, processor)
 
-	wsCli.Start()
+	// Start upstream WS client only if enabled in config
+	cfg := cfgManager.Get()
+	if cfg.Upstream.Enabled && cfg.Upstream.WSUrl != "" {
+		logger.Info("main", "upstream WS client mode enabled, starting...")
+		wsCli.Start()
+	} else {
+		logger.Info("main", "upstream WS client disabled (no wsUrl or not enabled)")
+	}
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsCli, orderClient))
+	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsCli, wsSrv, orderClient))
 	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsCli))
 	mux.HandleFunc("/api/ws/disconnect", handleWSDisconnect(cfgManager, logger, wsCli))
-	mux.HandleFunc("/api/ws/status", handleWSStatus(wsCli))
+	mux.HandleFunc("/api/ws/status", handleWSStatus(wsCli, wsSrv))
 	mux.HandleFunc("/api/tasks/test", handleTestTask(cfgManager, logger, orderClient))
 	mux.HandleFunc("/api/logs/stream", handleLogsStream(logger))
-	mux.HandleFunc("/ws/connect", wsSrv.HandleWS)
+
+	// WS server endpoint — path is configurable
+	wsPath := cfg.WSServer.Path
+	if wsPath == "" {
+		wsPath = "/ws"
+	}
+	if cfg.WSServer.Enabled {
+		mux.HandleFunc(wsPath, wsSrv.HandleWS)
+		logger.Info("main", fmt.Sprintf("WS server listening on %s", wsPath))
+	}
 
 	fileServer := http.FileServer(http.Dir("web"))
 	mux.Handle("/", fileServer)
 
-	cfg := cfgManager.Get()
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 
 	srv := &http.Server{
@@ -85,7 +100,7 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 }
 
-func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.Client, orderClient *order.Client) http.HandlerFunc {
+func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.Client, wsSrv *wsserver.Server, orderClient *order.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
@@ -96,6 +111,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 		case http.MethodPost:
 			var payload struct {
 				Upstream config.UpstreamConfig `json:"upstream"`
+				WSServer config.WSServerConfig `json:"wsServer"`
 				Tasks    []config.TaskConfig   `json:"tasks"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -115,6 +131,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 			}
 			if err := cfgMgr.Update(func(c *config.Config) {
 				c.Upstream = payload.Upstream
+				c.WSServer = payload.WSServer
 				c.Tasks = payload.Tasks
 			}); err != nil {
 				logger.Error("config", fmt.Sprintf("update config error: %v", err))
@@ -167,7 +184,7 @@ func handleWSDisconnect(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wscl
 	}
 }
 
-func handleWSStatus(wsCli *wsclient.Client) http.HandlerFunc {
+func handleWSStatus(wsCli *wsclient.Client, wsSrv *wsserver.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -175,7 +192,8 @@ func handleWSStatus(wsCli *wsclient.Client) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		status := map[string]any{
-			"connected": wsCli.IsConnected(),
+			"connected":     wsCli.IsConnected(),
+			"wsServerConns": wsSrv.ConnCount(),
 		}
 		_ = json.NewEncoder(w).Encode(status)
 	}
