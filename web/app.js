@@ -91,6 +91,7 @@ function card(t, idx) {
       <div class="flex items-center gap-2 min-w-0">
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
         <input class="border rounded px-2 py-1 text-xs font-semibold" style="max-width:9rem" data-field="name" value="${esc(t.name)}" />
+        <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>
       <div class="flex items-center gap-1 flex-shrink-0">
@@ -248,6 +249,7 @@ function setExpires(tid, days) {
   if (days>0) { const n=Math.floor(Date.now()/1000); let c=+inp.value||0; if(c<n)c=n; v=c+days*86400; }
   inp.value=v; disp.textContent=fmtDT(v);
   const t=stateTasks.find(x=>x.id===tid); if(t) t.expiresAt=v;
+  updateCD(tid, v);
 }
 window.setExpires = setExpires;
 function fmtDT(u) { if(!u)return"未设置";const d=new Date(u*1000),p=n=>String(n).padStart(2,"0");return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
