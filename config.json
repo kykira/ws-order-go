@@ -20,7 +20,6 @@
       "name": "Account 1",
       "enabled": true,
       "skipSignals": 0,
-      "minProba": 0.60,
       "allowedSymbols": "",
       "expiresAt": 1784184916,
       "httpProxyUrl": "",
@@ -29,14 +28,14 @@
       "headers": "",
       "body": "",
       "valueBuy": "",
-      "valueSell": ""
+      "valueSell": "",
+      "minProba": 0.6
     },
     {
       "id": "acct-2",
       "name": "Account 2",
       "enabled": true,
       "skipSignals": 0,
-      "minProba": 0.65,
       "allowedSymbols": "",
       "expiresAt": 0,
       "httpProxyUrl": "",
@@ -45,7 +44,8 @@
       "headers": "",
       "body": "",
       "valueBuy": "",
-      "valueSell": ""
+      "valueSell": "",
+      "minProba": 0.65
     }
   ]
 }
