@@ -70,7 +70,8 @@ function n(t) {
     skipSignals: +t.skipSignals||0, timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
     expiresAt: +t.expiresAt||0, httpProxyUrl: String(t.httpProxyUrl||""), apiUrl: String(t.apiUrl||""),
     method: String(t.method||"POST").toUpperCase(), headers: String(t.headers||""), body: String(t.body||""),
-    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||"") };
+    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||""),
+    minProba: parseFloat(t.minProba)||0 };
 }
 
 function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:true, apiUrl:"https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order", method:"POST", headers:"Content-Type: application/json\nclienttype: web", body:'{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}', valueBuy:"LONG", valueSell:"SHORT" }); }
@@ -125,6 +126,7 @@ function card(t, idx) {
       <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">buy→</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" /></div>
       <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">sell→</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" /></div>
       <div style="width:4rem"><label class="block text-[11px] text-gray-500 mb-0.5">跳过</label><input type="number" min="0" class="border rounded w-full px-2 py-1 text-xs" data-field="skipSignals" value="${t.skipSignals||0}" /></div>
+      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">proba≥</label><input type="number" step="0.01" min="0" max="1" class="border rounded w-full px-2 py-1 text-xs" data-field="minProba" value="${t.minProba||0}" placeholder="0" /></div>
       <div class="flex-1">
         <label class="block text-[11px] text-gray-500 mb-0.5">过期</label>
         <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
@@ -187,7 +189,8 @@ function collectTasks() {
       timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
       httpProxyUrl: String(g("httpProxyUrl")||"").trim(), apiUrl: String(g("apiUrl")||"").trim(),
       method: String(g("method")||"POST").trim().toUpperCase(), headers: String(g("headers")||""), body: String(g("body")||""),
-      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim() };
+      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim(),
+      minProba: parseFloat(g("minProba"))||0 };
   });
 }
 

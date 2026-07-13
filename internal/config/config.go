@@ -40,6 +40,7 @@ type TaskConfig struct {
 	Body           string      `json:"body"`
 	ValueBuy       string      `json:"valueBuy"`
 	ValueSell      string      `json:"valueSell"`
+	MinProba       float64     `json:"minProba"` // 0=不校验，非0=proba低于此值的信号跳过该账号
 }
 
 type Config struct {

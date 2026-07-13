@@ -21,9 +21,10 @@ type Signal struct {
 	TickerType string `json:"tickerType,omitempty"`
 	Timestamp  string `json:"timestamp"`
 
-	Amount    string `json:"amount,omitempty"`
-	Unit      string `json:"unit,omitempty"`
-	Direction string `json:"direction,omitempty"`
+	Amount    string  `json:"amount,omitempty"`
+	Unit      string  `json:"unit,omitempty"`
+	Direction string  `json:"direction,omitempty"`
+	Proba     float64 `json:"proba,omitempty"` // 0=未传，>0=模型置信度
 }
 
 type Processor struct {
@@ -113,6 +114,16 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 
 		if applySkip && task.SkipSignals > 0 {
 			if !p.checkSkip(task) {
+				continue
+			}
+		}
+
+		// Proba filter: if signal carries proba and task has threshold,
+		// skip signals in the middle zone (not confident enough for either direction).
+		if sig.Proba > 0 && task.MinProba > 0 {
+			lo := 1 - task.MinProba
+			if sig.Proba > lo && sig.Proba < task.MinProba {
+				p.logger.Info("signal", fmt.Sprintf("account=[%s] proba=%.4f in middle zone (%.2f~%.2f), skip", task.Name, sig.Proba, lo, task.MinProba))
 				continue
 			}
 		}
