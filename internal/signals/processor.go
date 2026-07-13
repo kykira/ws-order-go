@@ -118,13 +118,20 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			}
 		}
 
-		// Proba filter: if signal carries proba and task has threshold,
-		// skip signals in the middle zone (not confident enough for either direction).
+		// Proba filter: skip if proba doesn't match the action direction.
+		// buy  requires proba >= minProba, sell requires proba <= 1-minProba.
 		if sig.Proba > 0 && task.MinProba > 0 {
-			lo := 1 - task.MinProba
-			if sig.Proba > lo && sig.Proba < task.MinProba {
-				p.logger.Info("signal", fmt.Sprintf("account=[%s] proba=%.4f in middle zone (%.2f~%.2f), skip", task.Name, sig.Proba, lo, task.MinProba))
-				continue
+			switch action {
+			case "buy":
+				if sig.Proba < task.MinProba {
+					p.logger.Info("signal", fmt.Sprintf("account=[%s] proba=%.4f < %.2f, skip buy", task.Name, sig.Proba, task.MinProba))
+					continue
+				}
+			case "sell":
+				if sig.Proba > (1 - task.MinProba) {
+					p.logger.Info("signal", fmt.Sprintf("account=[%s] proba=%.4f > %.2f, skip sell", task.Name, sig.Proba, 1-task.MinProba))
+					continue
+				}
 			}
 		}
 
