@@ -144,13 +144,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 
 	switch cfg.Dispatch {
 	case "random":
-		if len(matched) > 1 {
-			task := matched[rand.Intn(len(matched))]
-			p.logger.Info("signal", fmt.Sprintf("dispatch=random picked 1/%d account=[%s]", len(matched), task.Name))
-			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
-		} else {
-			p.executeTask(source, sig, matched[0], action, amount, unit, matchedRange)
-		}
+		p.dispatchRandom(source, sig, matched, action, amount, unit, matchedRange)
 		return nil
 
 	case "round-robin":
@@ -159,11 +153,69 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 
 	default: // "all" or empty
 		for _, task := range matched {
+			if !p.tryClaimSlot(task.ID, task.Name) {
+				continue
+			}
 			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
 		}
 	}
 
 	return nil
+}
+
+// tryClaimSlot applies decay and tries to claim one order slot (max 5 per 30min).
+// Returns true if a slot was claimed, false if the account is full.
+// Must be called with p.mu held.
+func (p *Processor) tryClaimSlot(taskID, taskName string) bool {
+	now := time.Now()
+	count := p.orderCounts[taskID]
+	if last, ok := p.orderLastDecay[taskID]; ok {
+		elapsed := now.Sub(last)
+		if elapsed >= orderDecayInterval {
+			decay := int(elapsed / orderDecayInterval)
+			if decay > count {
+				decay = count
+			}
+			count -= decay
+			p.orderLastDecay[taskID] = last.Add(time.Duration(decay) * orderDecayInterval)
+			if decay > 0 {
+				p.logger.Info("signal", fmt.Sprintf("account=[%s] decay -%d (30m×%d) count %d→%d", taskName, decay, decay, p.orderCounts[taskID], count))
+			}
+		}
+	} else {
+		p.orderLastDecay[taskID] = now
+	}
+
+	if count >= maxOrdersPerWindow {
+		p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", taskName, count, maxOrdersPerWindow))
+		p.orderCounts[taskID] = count
+		return false
+	}
+
+	count++
+	p.orderCounts[taskID] = count
+	p.logger.Info("signal", fmt.Sprintf("account=[%s] slot %d/%d", taskName, count, maxOrdersPerWindow))
+	return true
+}
+
+// dispatchRandom picks one matched account, respecting slot limits.
+func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Shuffle to randomise which account gets tried first
+	perm := rand.Perm(len(matched))
+	for _, i := range perm {
+		task := matched[i]
+		if p.tryClaimSlot(task.ID, task.Name) {
+			p.mu.Unlock()
+			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+			p.mu.Lock()
+			p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
+			return
+		}
+	}
+	p.logger.Info("signal", fmt.Sprintf("dispatch=random all %d accounts full, signal dropped", len(matched)))
 }
 
 // dispatchRoundRobin walks matched accounts in config order, picks the first
@@ -173,43 +225,14 @@ func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []conf
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	now := time.Now()
-
 	for _, task := range matched {
-		// Apply decay: every 30min elapsed since last decay, reduce count by 1
-		count := p.orderCounts[task.ID]
-		if last, ok := p.orderLastDecay[task.ID]; ok {
-			elapsed := now.Sub(last)
-			if elapsed >= orderDecayInterval {
-				decay := int(elapsed / orderDecayInterval)
-				if decay > count {
-					decay = count
-				}
-				count -= decay
-				p.orderLastDecay[task.ID] = last.Add(time.Duration(decay) * orderDecayInterval)
-				if decay > 0 {
-					p.logger.Info("signal", fmt.Sprintf("account=[%s] decay -%d (30m×%d) count %d→%d", task.Name, decay, decay, p.orderCounts[task.ID], count))
-				}
-			}
-		} else {
-			p.orderLastDecay[task.ID] = now
+		if p.tryClaimSlot(task.ID, task.Name) {
+			p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s]", task.Name))
+			p.mu.Unlock()
+			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+			p.mu.Lock()
+			return
 		}
-
-		if count >= maxOrdersPerWindow {
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", task.Name, count, maxOrdersPerWindow))
-			p.orderCounts[task.ID] = count
-			continue
-		}
-
-		// Claim slot: +1
-		count++
-		p.orderCounts[task.ID] = count
-		p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s] slot %d/%d", task.Name, count, maxOrdersPerWindow))
-
-		p.mu.Unlock()
-		p.executeTask(source, sig, task, action, amount, unit, matchedRange)
-		p.mu.Lock()
-		return
 	}
 
 	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin all %d accounts full, signal dropped", len(matched)))
