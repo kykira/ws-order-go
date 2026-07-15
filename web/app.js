@@ -23,6 +23,10 @@ async function loadConfig() {
   setChk("wsServerEnabled", ws.enabled!==false);
   setChk("wsServerApplySkip", !!ws.applySkip);
   updateWSEndpoint();
+  const up = c.upstream || {};
+  setVal("upstreamWsUrl", up.wsUrl||"");
+  setVal("upstreamWsKey", up.wsKey||"");
+  setChk("upstreamEnabled", !!up.enabled);
   const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
   stateTasks = normalizeTasks(c);
   renderTasks(stateTasks);
@@ -39,6 +43,9 @@ function initActions() {
       const c = JSON.parse(s); const ws = c.wsServer||{};
       setVal("wsServerPath", ws.path||"/ws"); setVal("wsServerKey", ws.key||"");
       setChk("wsServerEnabled", ws.enabled!==false); setChk("wsServerApplySkip", !!ws.applySkip); updateWSEndpoint();
+      const up = c.upstream||{};
+      setVal("upstreamWsUrl", up.wsUrl||""); setVal("upstreamWsKey", up.wsKey||"");
+      setChk("upstreamEnabled", !!up.enabled);
       const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
       stateTasks = normalizeTasks(c); renderTasks(stateTasks); log("JSON 已导入");
     } catch(e) { alert("解析失败: "+e.message); }
@@ -46,12 +53,22 @@ function initActions() {
   $("btn-add-task")?.addEventListener("click", () => { stateTasks = collectTasks(); stateTasks.push(defaultTask()); renderTasks(stateTasks); });
   $("wsServerPath")?.addEventListener("input", updateWSEndpoint);
   $("wsServerKey")?.addEventListener("input", updateWSEndpoint);
+
+  // Upstream connect/disconnect
+  $("btn-upstream-connect")?.addEventListener("click", async () => {
+    try { await apiPost("/api/ws/connect"); updateWSStatus(); log("上游连接请求已发送"); }
+    catch(e) { log("连接失败: "+e.message, "ERROR"); }
+  });
+  $("btn-upstream-disconnect")?.addEventListener("click", async () => {
+    try { await apiPost("/api/ws/disconnect"); updateWSStatus(); log("上游已断开"); }
+    catch(e) { log("断开失败: "+e.message, "ERROR"); }
+  });
 }
 
 // ── Config ──
 
 function collectPayload() {
-  const upstream = { wsUrl: "", wsKey: "", enabled: false };
+  const upstream = { wsUrl: getVal("upstreamWsUrl")||"", wsKey: getVal("upstreamWsKey")||"", enabled: isChk("upstreamEnabled") };
   const wsServer = { path: getVal("wsServerPath")||"/ws", key: getVal("wsServerKey")||"", enabled: isChk("wsServerEnabled"), applySkip: isChk("wsServerApplySkip") };
   const dispatch = $("dispatchMode")?.value || "round-robin";
   const tasks = collectTasks().map(n);
@@ -210,6 +227,12 @@ async function updateWSStatus() {
       const n = s.wsServerConns||0;
       el.innerHTML = `接入 <strong class="ml-0.5">${n}</strong>`;
       el.className = `inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${n>0?'bg-green-50 text-green-700 border-green-200':'bg-gray-100 text-gray-500'}`;
+    }
+    const up = $("upstream-status");
+    if (up) {
+      const connected = !!s.connected;
+      up.textContent = connected ? "已连接" : "未连接";
+      up.className = `inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${connected?'bg-green-50 text-green-700 border-green-200':'bg-gray-100 text-gray-500'}`;
     }
   } catch(e) {}
 }
