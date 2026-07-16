@@ -58,9 +58,9 @@ func (p *Processor) Stop() {
 	close(p.stopCh)
 }
 
-// slotExpiryLoop ticks every second to release expired slots.
+// slotExpiryLoop ticks every minute to release expired slots.
 func (p *Processor) slotExpiryLoop() {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
@@ -73,7 +73,7 @@ func (p *Processor) slotExpiryLoop() {
 }
 
 const maxOrdersPerWindow = 5
-const orderSlotTTL = 30 * time.Minute
+const orderSlotTTL = 29 * time.Minute
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
