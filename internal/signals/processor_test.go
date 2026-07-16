@@ -79,7 +79,6 @@ func TestDispatchAllExecutesAll(t *testing.T) {
 			signalCount++
 		}
 	}
-	// dispatch=all should produce 2 account log lines (one per task)
 	if signalCount < 2 {
 		t.Errorf("expected >=2 signal log lines for all dispatch, got %d", signalCount)
 	}
@@ -127,7 +126,6 @@ func TestDispatchRoundRobinOrder(t *testing.T) {
 	sig := Signal{Action: "buy", Symbol: "BTCUSDT", OrderID: 1}
 	_ = proc.Handle("test", sig, false)
 
-	// First signal should go to Account-A (first in order)
 	foundA := false
 	for _, e := range logger.Entries() {
 		t.Logf("[%s] %s", e.Level, e.Message)
@@ -193,7 +191,7 @@ func TestDispatchRoundRobin5Limit(t *testing.T) {
 	}
 }
 
-func TestDispatchRoundRobinDecay(t *testing.T) {
+func TestDispatchRoundRobinSlotExpiry(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := dir + "/config.json"
 
@@ -222,12 +220,16 @@ func TestDispatchRoundRobinDecay(t *testing.T) {
 		_ = proc.Handle("test", sig, false)
 	}
 
-	// Manually simulate 30min decay by advancing orderLastDecay
+	// Manually age the first slot to 31 minutes ago
 	proc.mu.Lock()
-	proc.orderLastDecay["a1"] = time.Now().Add(-31 * time.Minute)
+	slots := proc.orderSlots["a1"]
+	if len(slots) > 0 {
+		slots[0] = time.Now().Add(-31 * time.Minute)
+		proc.orderSlots["a1"] = slots
+	}
 	proc.mu.Unlock()
 
-	// Now one slot should be available again
+	// Now one slot should expire, making room
 	sig.OrderID = 99
 	_ = proc.Handle("test", sig, false)
 
@@ -239,7 +241,7 @@ func TestDispatchRoundRobinDecay(t *testing.T) {
 		}
 	}
 	if count < 6 {
-		t.Errorf("expected 6 orders after decay (5 + 1), got %d", count)
+		t.Errorf("expected 6 orders after slot expiry (5 + 1), got %d", count)
 	}
 }
 

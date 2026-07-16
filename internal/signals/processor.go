@@ -32,34 +32,33 @@ type Processor struct {
 	logger *logs.Logger
 	order  *order.Client
 
-	mu             sync.Mutex
-	seenSkip       map[string]int
-	skipStartTime  map[string]time.Time
-	orderCounts   map[string]int
-	orderLastDecay map[string]time.Time
+	mu            sync.Mutex
+	seenSkip      map[string]int
+	skipStartTime map[string]time.Time
+	// orderSlots[taskID] = 开仓时间列表，每个slot独立计时30分钟后释放
+	orderSlots map[string][]time.Time
 }
 
 func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client) *Processor {
 	return &Processor{
-		cfg:            cfg,
-		logger:         logger,
-		order:          orderClient,
-		seenSkip:       make(map[string]int),
-		skipStartTime:  make(map[string]time.Time),
-		orderCounts:    make(map[string]int),
-		orderLastDecay: make(map[string]time.Time),
+		cfg:           cfg,
+		logger:        logger,
+		order:         orderClient,
+		seenSkip:      make(map[string]int),
+		skipStartTime: make(map[string]time.Time),
+		orderSlots:    make(map[string][]time.Time),
 	}
 }
 
 const maxOrdersPerWindow = 5
-const orderDecayInterval = 30 * time.Minute
+const orderSlotTTL = 30 * time.Minute
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	cfg := p.cfg.Get()
 
-	// 所有信号到达时，先对所有账号执行 decay（不依赖 proba 匹配）
-	p.applyDecayToAll(cfg.Tasks)
+	// 每个信号到达时，先清理所有账号的过期 slot
+	p.expireSlots()
 
 	action := strings.ToLower(strings.TrimSpace(sig.Action))
 	if action == "" {
@@ -121,8 +120,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 			}
 		}
 
-		// Proba filter: skip if proba doesn't match the action direction.
-		// buy  requires proba >= minProba, sell requires proba <= 1-minProba.
+		// Proba filter
 		if sig.Proba > 0 && task.MinProba > 0 {
 			switch action {
 			case "buy":
@@ -169,61 +167,42 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	return nil
 }
 
-// applyDecayToAll runs decay on all accounts every time a signal arrives.
-// This ensures time-based slot recovery independent of proba matching.
-func (p *Processor) applyDecayToAll(tasks []config.TaskConfig) {
+// expireSlots removes slots older than orderSlotTTL for all accounts.
+func (p *Processor) expireSlots() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	now := time.Now()
-	for _, task := range tasks {
-		if !task.Enabled {
-			continue
+	for taskID, slots := range p.orderSlots {
+		cutoff := now.Add(-orderSlotTTL)
+		alive := make([]time.Time, 0, len(slots))
+		expired := 0
+		for _, t := range slots {
+			if t.Before(cutoff) {
+				expired++
+			} else {
+				alive = append(alive, t)
+			}
 		}
-		count := p.orderCounts[task.ID]
-		if count == 0 {
-			continue
-		}
-		last, ok := p.orderLastDecay[task.ID]
-		if !ok {
-			continue
-		}
-		elapsed := now.Sub(last)
-		if elapsed < orderDecayInterval {
-			continue
-		}
-		decay := int(elapsed / orderDecayInterval)
-		if decay > count {
-			decay = count
-		}
-		count -= decay
-		p.orderCounts[task.ID] = count
-		p.orderLastDecay[task.ID] = last.Add(time.Duration(decay) * orderDecayInterval)
-		if decay > 0 {
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] decay -%d (30m×%d) count %d→%d", task.Name, decay, decay, p.orderCounts[task.ID]+decay, count))
+		if expired > 0 {
+			p.orderSlots[taskID] = alive
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] expire -%d slots (30m TTL) %d→%d", taskID, expired, len(slots), len(alive)))
 		}
 	}
 }
 
-// tryClaimSlot tries to claim one order slot (max 5 per 30min).
-// Decay is handled upstream by applyDecayToAll; this only checks+claims.
-// Returns true if a slot was claimed, false if the account is full.
+// tryClaimSlot tries to claim one slot. Returns true if claimed, false if full.
 // Must be called with p.mu held.
 func (p *Processor) tryClaimSlot(taskID, taskName string) bool {
-	count := p.orderCounts[taskID]
-
-	if count >= maxOrdersPerWindow {
-		p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", taskName, count, maxOrdersPerWindow))
+	slots := p.orderSlots[taskID]
+	if len(slots) >= maxOrdersPerWindow {
+		p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", taskName, len(slots), maxOrdersPerWindow))
 		return false
 	}
 
-	count++
-	p.orderCounts[taskID] = count
-	// Ensure orderLastDecay is initialised so applyDecayToAll can work
-	if _, ok := p.orderLastDecay[taskID]; !ok {
-		p.orderLastDecay[taskID] = time.Now()
-	}
-	p.logger.Info("signal", fmt.Sprintf("account=[%s] slot %d/%d", taskName, count, maxOrdersPerWindow))
+	now := time.Now()
+	p.orderSlots[taskID] = append(slots, now)
+	p.logger.Info("signal", fmt.Sprintf("account=[%s] slot %d/%d", taskName, len(p.orderSlots[taskID]), maxOrdersPerWindow))
 	return true
 }
 
@@ -232,7 +211,6 @@ func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.T
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Shuffle to randomise which account gets tried first
 	perm := rand.Perm(len(matched))
 	for _, i := range perm {
 		task := matched[i]
@@ -248,8 +226,7 @@ func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.T
 }
 
 // dispatchRoundRobin walks matched accounts in config order, picks the first
-// one below the 5-slot limit. Each account has 5 order slots; every 30 minutes
-// one slot is refilled (decay). +1 on order, -1 per 30min, floor 0.
+// one below the 5-slot limit.
 func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
