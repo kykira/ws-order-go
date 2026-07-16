@@ -152,12 +152,15 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 
 	default: // "all" or empty
+		p.mu.Lock()
 		for _, task := range matched {
-			if !p.tryClaimSlot(task.ID, task.Name) {
-				continue
+			if p.tryClaimSlot(task.ID, task.Name) {
+				p.mu.Unlock()
+				p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+				p.mu.Lock()
 			}
-			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
 		}
+		p.mu.Unlock()
 	}
 
 	return nil
