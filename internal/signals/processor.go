@@ -58,6 +58,9 @@ const orderDecayInterval = 30 * time.Minute
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	cfg := p.cfg.Get()
 
+	// 所有信号到达时，先对所有账号执行 decay（不依赖 proba 匹配）
+	p.applyDecayToAll(cfg.Tasks)
+
 	action := strings.ToLower(strings.TrimSpace(sig.Action))
 	if action == "" {
 		p.logger.Error("signal", "empty action, ignore")
@@ -166,37 +169,60 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	return nil
 }
 
-// tryClaimSlot applies decay and tries to claim one order slot (max 5 per 30min).
+// applyDecayToAll runs decay on all accounts every time a signal arrives.
+// This ensures time-based slot recovery independent of proba matching.
+func (p *Processor) applyDecayToAll(tasks []config.TaskConfig) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	now := time.Now()
+	for _, task := range tasks {
+		if !task.Enabled {
+			continue
+		}
+		count := p.orderCounts[task.ID]
+		if count == 0 {
+			continue
+		}
+		last, ok := p.orderLastDecay[task.ID]
+		if !ok {
+			continue
+		}
+		elapsed := now.Sub(last)
+		if elapsed < orderDecayInterval {
+			continue
+		}
+		decay := int(elapsed / orderDecayInterval)
+		if decay > count {
+			decay = count
+		}
+		count -= decay
+		p.orderCounts[task.ID] = count
+		p.orderLastDecay[task.ID] = last.Add(time.Duration(decay) * orderDecayInterval)
+		if decay > 0 {
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] decay -%d (30m×%d) count %d→%d", task.Name, decay, decay, p.orderCounts[task.ID]+decay, count))
+		}
+	}
+}
+
+// tryClaimSlot tries to claim one order slot (max 5 per 30min).
+// Decay is handled upstream by applyDecayToAll; this only checks+claims.
 // Returns true if a slot was claimed, false if the account is full.
 // Must be called with p.mu held.
 func (p *Processor) tryClaimSlot(taskID, taskName string) bool {
-	now := time.Now()
 	count := p.orderCounts[taskID]
-	if last, ok := p.orderLastDecay[taskID]; ok {
-		elapsed := now.Sub(last)
-		if elapsed >= orderDecayInterval {
-			decay := int(elapsed / orderDecayInterval)
-			if decay > count {
-				decay = count
-			}
-			count -= decay
-			p.orderLastDecay[taskID] = last.Add(time.Duration(decay) * orderDecayInterval)
-			if decay > 0 {
-				p.logger.Info("signal", fmt.Sprintf("account=[%s] decay -%d (30m×%d) count %d→%d", taskName, decay, decay, p.orderCounts[taskID], count))
-			}
-		}
-	} else {
-		p.orderLastDecay[taskID] = now
-	}
 
 	if count >= maxOrdersPerWindow {
 		p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", taskName, count, maxOrdersPerWindow))
-		p.orderCounts[taskID] = count
 		return false
 	}
 
 	count++
 	p.orderCounts[taskID] = count
+	// Ensure orderLastDecay is initialised so applyDecayToAll can work
+	if _, ok := p.orderLastDecay[taskID]; !ok {
+		p.orderLastDecay[taskID] = time.Now()
+	}
 	p.logger.Info("signal", fmt.Sprintf("account=[%s] slot %d/%d", taskName, count, maxOrdersPerWindow))
 	return true
 }
