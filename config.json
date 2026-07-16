@@ -13,39 +13,51 @@
     "key": "",
     "applySkip": false
   },
-  "dispatch": "round-robin",
+  "dispatch": "all",
   "tasks": [
     {
       "id": "acct-1",
-      "name": "Account 1",
-      "enabled": true,
+      "name": "菲梨btc",
+      "enabled": false,
       "skipSignals": 0,
-      "allowedSymbols": "",
+      "timeRanges": [
+        {
+          "start": "08:00",
+          "end": "19:00"
+        }
+      ],
+      "allowedSymbols": "BTCUSDT",
       "expiresAt": 1784184916,
       "httpProxyUrl": "",
-      "apiUrl": "https://api.ipify.org?format=json",
-      "method": "GET",
-      "headers": "",
-      "body": "",
-      "valueBuy": "",
-      "valueSell": "",
-      "minProba": 0.6
+      "apiUrl": "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
+      "method": "POST",
+      "headers": "content-type: application/json\nclienttype: web\ncsrftoken: ec70c0e5b4cc6ee00c5c9aad0563b4da\nCookie: p20t=web.1208521138.13A8C17795F0DB76049138C2FAF682C1",
+      "body": "{\"direction\":\"{{action}}\",\"timeIncrements\":\"THIRTY_MINUTE\",\"orderAmount\":10,\"payoutRatio\":0.85,\"walletType\":\"UM\",\"symbolName\":\"BTCUSDT\"}",
+      "valueBuy": "LONG",
+      "valueSell": "SHORT",
+      "minProba": 0.61
     },
     {
-      "id": "acct-2",
-      "name": "Account 2",
-      "enabled": true,
+      "id": "8a9a3803-d174-4b8a-8248-adfa4086a2ff",
+      "name": "李剑btc",
+      "enabled": false,
       "skipSignals": 0,
-      "allowedSymbols": "",
+      "timeRanges": [
+        {
+          "start": "20:00",
+          "end": "07:00"
+        }
+      ],
+      "allowedSymbols": "BTCUSDT",
       "expiresAt": 0,
       "httpProxyUrl": "",
-      "apiUrl": "https://api.ipify.org?format=json",
-      "method": "GET",
-      "headers": "",
-      "body": "",
-      "valueBuy": "",
-      "valueSell": "",
-      "minProba": 0.65
+      "apiUrl": "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
+      "method": "POST",
+      "headers": "content-type: application/json\nclienttype: web\ncsrftoken: 965f4f449bdfdd7b9d2f9fbee5aa3f62\nCookie: p20t=web.1248780488.2E9CD94B9278BFB5C35E4CA5979F1546",
+      "body": "{\"direction\":\"{{action}}\",\"timeIncrements\":\"THIRTY_MINUTE\",\"orderAmount\":10,\"payoutRatio\":0.85,\"walletType\":\"UM\",\"symbolName\":\"BTCUSDT\"}",
+      "valueBuy": "LONG",
+      "valueSell": "SHORT",
+      "minProba": 0.61
     }
   ]
 }

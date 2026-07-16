@@ -94,6 +94,7 @@ func main() {
 
 	logger.Info("main", "shutting down...")
 	wsCli.Stop()
+	processor.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

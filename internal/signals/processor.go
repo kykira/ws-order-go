@@ -35,18 +35,40 @@ type Processor struct {
 	mu            sync.Mutex
 	seenSkip      map[string]int
 	skipStartTime map[string]time.Time
-	// orderSlots[taskID] = 开仓时间列表，每个slot独立计时30分钟后释放
-	orderSlots map[string][]time.Time
+	orderSlots    map[string][]time.Time // taskID → 开仓时间列表，每个独立30min TTL
+	stopCh        chan struct{}
 }
 
 func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client) *Processor {
-	return &Processor{
+	p := &Processor{
 		cfg:           cfg,
 		logger:        logger,
 		order:         orderClient,
 		seenSkip:      make(map[string]int),
 		skipStartTime: make(map[string]time.Time),
 		orderSlots:    make(map[string][]time.Time),
+		stopCh:        make(chan struct{}),
+	}
+	go p.slotExpiryLoop()
+	return p
+}
+
+// Stop shuts down the background expiry loop.
+func (p *Processor) Stop() {
+	close(p.stopCh)
+}
+
+// slotExpiryLoop ticks every second to release expired slots.
+func (p *Processor) slotExpiryLoop() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-p.stopCh:
+			return
+		case <-ticker.C:
+			p.expireSlots()
+		}
 	}
 }
 
@@ -56,9 +78,6 @@ const orderSlotTTL = 30 * time.Minute
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	cfg := p.cfg.Get()
-
-	// 每个信号到达时，先清理所有账号的过期 slot
-	p.expireSlots()
 
 	action := strings.ToLower(strings.TrimSpace(sig.Action))
 	if action == "" {

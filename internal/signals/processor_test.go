@@ -220,7 +220,7 @@ func TestDispatchRoundRobinSlotExpiry(t *testing.T) {
 		_ = proc.Handle("test", sig, false)
 	}
 
-	// Manually age the first slot to 31 minutes ago
+	// Manually age the first slot to 31 minutes ago, then expire it
 	proc.mu.Lock()
 	slots := proc.orderSlots["a1"]
 	if len(slots) > 0 {
@@ -228,8 +228,9 @@ func TestDispatchRoundRobinSlotExpiry(t *testing.T) {
 		proc.orderSlots["a1"] = slots
 	}
 	proc.mu.Unlock()
+	proc.expireSlots()
 
-	// Now one slot should expire, making room
+	// Now one slot should have expired, making room
 	sig.OrderID = 99
 	_ = proc.Handle("test", sig, false)
 
