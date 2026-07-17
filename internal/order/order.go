@@ -2,11 +2,13 @@ package order
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	http "github.com/bogdanfinn/fhttp"
 	tls_client "github.com/bogdanfinn/tls-client"
@@ -82,6 +84,10 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		c.logger.Error("order", fmt.Sprintf("create request error: %v", err))
 		return err
 	}
+	// Allow body re-reading for retries
+	httpReq.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(bodyStr)), nil
+	}
 
 	httpReq.Header = http.Header{
 		"User-Agent":      {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"},
@@ -140,22 +146,53 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http client error: %v", tag, task.Name, err))
 		return err
 	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error: %v", tag, task.Name, err))
-		return err
-	}
-	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	// Retry up to 5 times on "Open order number has reached maximum limit" (93420018)
+	maxRetries := 5
+	var lastRespBody []byte
+	var lastStatusCode int
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := time.Duration(1<<uint(attempt-1)) * time.Second // 1s, 2s, 4s, 8s
+			c.logger.Info("order", fmt.Sprintf("%stask=[%s] retry %d/%d after %v", tag, task.Name, attempt, maxRetries-1, delay))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
 
-	c.logger.Info("order", fmt.Sprintf("%stask=[%s] FINISH status=%d\nResponse: %s", tag, task.Name, resp.StatusCode, string(respBody)))
+		resp, err := httpClient.Do(httpReq)
+		if err != nil {
+			c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error (attempt %d): %v", tag, task.Name, attempt+1, err))
+			return err
+		}
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		lastRespBody = respBody
+		lastStatusCode = resp.StatusCode
+
+		c.logger.Info("order", fmt.Sprintf("%stask=[%s] FINISH status=%d\nResponse: %s", tag, task.Name, resp.StatusCode, string(respBody)))
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			// Check for Binance business error 93420018
+			var bizResp struct {
+				Code string `json:"code"`
+			}
+			if json.Unmarshal(respBody, &bizResp) == nil && bizResp.Code == "93420018" {
+				c.logger.Info("order", fmt.Sprintf("%stask=[%s] max order limit reached, will retry", tag, task.Name))
+				continue
+			}
+			return nil
+		}
+
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	return nil
+	c.logger.Error("order", fmt.Sprintf("%stask=[%s] max retries exhausted, last status=%d body=%s",
+		tag, task.Name, lastStatusCode, string(lastRespBody)))
+	return fmt.Errorf("max retries (%d) exhausted on order limit error", maxRetries)
 }
 
 func (c *Client) httpClientForTask(task config.TaskConfig) (tls_client.HttpClient, error) {
