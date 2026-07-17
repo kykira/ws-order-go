@@ -160,6 +160,8 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 				return ctx.Err()
 			case <-time.After(delay):
 			}
+			// Reset request body for retry
+			httpReq.Body = io.NopCloser(strings.NewReader(bodyStr))
 		}
 
 		resp, err := httpClient.Do(httpReq)
@@ -176,13 +178,21 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		c.logger.Info("order", fmt.Sprintf("%stask=[%s] FINISH status=%d\nResponse: %s", tag, task.Name, resp.StatusCode, string(respBody)))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			// Check for Binance business error 93420018
 			var bizResp struct {
-				Code string `json:"code"`
+				Code    string `json:"code"`
+				Success bool   `json:"success"`
 			}
-			if json.Unmarshal(respBody, &bizResp) == nil && bizResp.Code == "93420018" {
-				c.logger.Info("order", fmt.Sprintf("%stask=[%s] max order limit reached, will retry", tag, task.Name))
-				continue
+			if json.Unmarshal(respBody, &bizResp) == nil {
+				if bizResp.Code == "93420018" {
+					c.logger.Info("order", fmt.Sprintf("%stask=[%s] max order limit reached, will retry", tag, task.Name))
+					continue
+				}
+				if bizResp.Code == "000000" || bizResp.Success {
+					return nil
+				}
+				// Other business error — don't retry
+				c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s", tag, task.Name, bizResp.Code))
+				return fmt.Errorf("binance error code=%s", bizResp.Code)
 			}
 			return nil
 		}
