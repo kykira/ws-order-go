@@ -134,17 +134,32 @@ func TestPrepareTasks_AllowsCrossMidnight(t *testing.T) {
 	}
 }
 
-func TestPrepareTasks_RejectsNonHourlyRanges(t *testing.T) {
+func TestPrepareTasks_RejectsNonHalfHourRanges(t *testing.T) {
+	tasks := []TaskConfig{{
+		ID:   "task-1",
+		Name: "Task 1",
+		TimeRanges: []TimeRange{
+			{Start: "08:15", End: "10:00"},
+		},
+	}}
+
+	if err := PrepareTasks(tasks); err == nil {
+		t.Fatalf("expected non-half-hour ranges to be rejected")
+	}
+}
+
+func TestPrepareTasks_AllowsHalfHourBoundaries(t *testing.T) {
 	tasks := []TaskConfig{{
 		ID:   "task-1",
 		Name: "Task 1",
 		TimeRanges: []TimeRange{
 			{Start: "08:30", End: "10:00"},
+			{Start: "13:00", End: "14:30"},
 		},
 	}}
 
-	if err := PrepareTasks(tasks); err == nil {
-		t.Fatalf("expected non-hourly ranges to be rejected")
+	if err := PrepareTasks(tasks); err != nil {
+		t.Fatalf("expected half-hour ranges to be allowed, got %v", err)
 	}
 }
 

@@ -147,10 +147,11 @@ func minuteInRange(currentMinute, startMinute, endMinute int) bool {
 func parseClockMinute(value string) (int, error) {
 	parsed, err := time.Parse("15:04", value)
 	if err != nil {
-		return 0, fmt.Errorf("must use HH:00 format")
+		return 0, fmt.Errorf("must use HH:00 or HH:30 format")
 	}
-	if parsed.Minute() != 0 {
-		return 0, fmt.Errorf("must use whole-hour boundaries in HH:00 format")
+	m := parsed.Minute()
+	if m != 0 && m != 30 {
+		return 0, fmt.Errorf("must use half-hour boundaries (HH:00 or HH:30)")
 	}
-	return parsed.Hour()*60 + parsed.Minute(), nil
+	return parsed.Hour()*60 + m, nil
 }

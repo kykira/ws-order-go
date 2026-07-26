@@ -171,7 +171,7 @@ function trHtml(taskId, ranges) {
     <button class="text-red-500 text-[11px] px-1" data-action="delete-time-range" data-task-id="${taskId}" data-index="${i}">✕</button></div>`).join("");
 }
 
-function hopts(sel) { let o='<option value="">--</option>'; for(let h=0;h<24;h++){const v=`${String(h).padStart(2,"0")}:00`;o+=`<option value="${v}" ${v===String(sel||"").trim()?"selected":""}>${v}</option>`;} return o; }
+function hopts(sel) { let o='<option value="">--</option>'; const sv=String(sel||"").trim(); for(let h=0;h<24;h++){for(let m of['00','30']){const v=`${String(h).padStart(2,"0")}:${m}`;o+=`<option value="${v}" ${v===sv?"selected":""}>${v}</option>`;}} return o; }
 
 function bind(c) {
   c.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", async ev => {
@@ -215,7 +215,7 @@ function validate(ts) { ts.forEach(t=>{ if(!t.apiUrl) throw new Error(`账号[${
 function vtr(t) { const r=ctr(t.timeRanges); if(r.length>4) throw new Error(`账号[${t.name}] 最多4段`);
   r.forEach((x,i)=>{ const l=`账号[${t.name}] 时段#${i+1}`; if(!x.start||!x.end) throw new Error(`${l} 起止必填`);
     const sm=pm(x.start,l), em=pm(x.end,l); if(sm===em) throw new Error(`${l} 起止不能相同`); }); }
-function pm(v,l) { if(!/^\d{2}:\d{2}$/.test(v)) throw new Error(`${l} 需HH:00`); const [h,m]=v.split(":").map(Number); if(h<0||h>23||m!==0) throw new Error(`${l} 仅整点`); return h*60+m; }
+function pm(v,l) { if(!/^\d{2}:\d{2}$/.test(v)) throw new Error(`${l} 需HH:MM格式`); const [h,m]=v.split(":").map(Number); if(h<0||h>23||(m!==0&&m!==30)) throw new Error(`${l} 仅支持整点或半点`); return h*60+m; }
 
 // ── WS Status ──
 
