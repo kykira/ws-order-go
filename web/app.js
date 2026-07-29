@@ -209,7 +209,7 @@ function card(t, idx) {
 function ntr(r) { return Array.isArray(r)?r.map(x=>({start:String(x?.start||"").trim(),end:String(x?.end||"").trim()})):[]; }
 function ctr(r) { return ntr(r).filter(x=>x.start||x.end); }
 function updTR(tid, fn) { const t=stateTasks.find(x=>x.id===tid); if(t) t.timeRanges=ntr(fn(ntr(t.timeRanges))); }
-function colTR(card) { return [...card.querySelectorAll("[data-time-range-field='start']")].map(s=>{const i=s.getAttribute("data-index"),e=card.querySelector(`[data-time-range-field=\"end\"][data-index=\"${cssEscape(i)}\"]`);return{start:String(s.value||"").trim(),end:String(e?.value||"").trim()}}); }
+function colTR(card) { return [...card.querySelectorAll("[data-time-range-field='start']")].map(s=>{const i=s.getAttribute("data-index"),e=card.querySelector(`[data-time-range-field='end'][data-index='${cssEscape(i)}']`);return{start:String(s.value||"").trim(),end:String(e?.value||"").trim()}}); }
 
 // ── Collect ──
 
