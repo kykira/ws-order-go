@@ -2,13 +2,24 @@
   "server": {
     "port": 9946
   },
-  "upstream": {
-    "wsUrl": "",
-    "wsKey": "",
-    "enabled": false
-  },
+  "upstreams": [
+    {
+      "id": "up-q2rpr5",
+      "name": "eth",
+      "wsUrl": "wss://sub.kyssr.xyz/api/ws/connect",
+      "wsKey": "ky",
+      "enabled": true
+    },
+    {
+      "id": "up-m7isbc",
+      "name": "btc",
+      "wsUrl": "ws://127.0.0.1:8081/ws/engine",
+      "wsKey": "",
+      "enabled": true
+    }
+  ],
   "wsServer": {
-    "enabled": true,
+    "enabled": false,
     "path": "/ws",
     "key": "",
     "applySkip": false
@@ -18,16 +29,10 @@
     {
       "id": "acct-1",
       "name": "菲梨btc",
-      "enabled": false,
+      "enabled": true,
       "skipSignals": 0,
-      "timeRanges": [
-        {
-          "start": "08:00",
-          "end": "19:00"
-        }
-      ],
       "allowedSymbols": "BTCUSDT",
-      "expiresAt": 1784184916,
+      "expiresAt": 1785727904,
       "httpProxyUrl": "",
       "apiUrl": "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
       "method": "POST",
@@ -35,29 +40,23 @@
       "body": "{\"direction\":\"{{action}}\",\"timeIncrements\":\"THIRTY_MINUTE\",\"orderAmount\":10,\"payoutRatio\":0.85,\"walletType\":\"UM\",\"symbolName\":\"BTCUSDT\"}",
       "valueBuy": "LONG",
       "valueSell": "SHORT",
-      "minProba": 0.61
+      "minProba": 0.58
     },
     {
-      "id": "8a9a3803-d174-4b8a-8248-adfa4086a2ff",
-      "name": "李剑btc",
-      "enabled": false,
+      "id": "acct-4hydan",
+      "name": "New Account",
+      "enabled": true,
       "skipSignals": 0,
-      "timeRanges": [
-        {
-          "start": "20:00",
-          "end": "07:00"
-        }
-      ],
-      "allowedSymbols": "BTCUSDT",
+      "allowedSymbols": "ETHUSDT",
       "expiresAt": 0,
       "httpProxyUrl": "",
       "apiUrl": "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
       "method": "POST",
-      "headers": "content-type: application/json\nclienttype: web\ncsrftoken: 965f4f449bdfdd7b9d2f9fbee5aa3f62\nCookie: p20t=web.1248780488.2E9CD94B9278BFB5C35E4CA5979F1546",
-      "body": "{\"direction\":\"{{action}}\",\"timeIncrements\":\"THIRTY_MINUTE\",\"orderAmount\":10,\"payoutRatio\":0.85,\"walletType\":\"UM\",\"symbolName\":\"BTCUSDT\"}",
+      "headers": "content-type: application/json\nclienttype: web\ncsrftoken: ec70c0e5b4cc6ee00c5c9aad0563b4da\nCookie: p20t=web.1208521138.13A8C17795F0DB76049138C2FAF682C1",
+      "body": "{\"orderAmount\":\"{{amount}}\",\"timeIncrements\":\"{{unit}}\",\"symbolName\":\"BTCUSDT\",\"payoutRatio\":\"0.80\",\"direction\":\"{{action}}\"}",
       "valueBuy": "LONG",
       "valueSell": "SHORT",
-      "minProba": 0.61
+      "minProba": 0
     }
   ]
 }
