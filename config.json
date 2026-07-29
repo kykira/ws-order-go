@@ -8,11 +8,18 @@
       "name": "eth",
       "wsUrl": "wss://sub.kyssr.xyz/api/ws/connect",
       "wsKey": "ky",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "up-m7isbc",
       "name": "btc",
+      "wsUrl": "wss://sub.kyssr.xyz/ws/engine",
+      "wsKey": "",
+      "enabled": false
+    },
+    {
+      "id": "up-2e3s3c",
+      "name": "btclocal",
       "wsUrl": "ws://127.0.0.1:8081/ws/engine",
       "wsKey": "",
       "enabled": true

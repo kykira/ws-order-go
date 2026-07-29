@@ -283,9 +283,9 @@ func (c *Conn) readLoop(conn *websocket.Conn, logger *logs.Logger, processor *si
 	pingPeriod := 60 * time.Second
 
 	conn.SetReadDeadline(time.Now().Add(pongWait))
-	conn.SetPingHandler(func(string) error {
+	conn.SetPingHandler(func(data string) error {
 		conn.SetReadDeadline(time.Now().Add(pongWait))
-		err := conn.WriteControl(websocket.PongMessage, []byte{}, time.Now().Add(10*time.Second))
+		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(10*time.Second))
 		if err != nil && err != websocket.ErrCloseSent {
 			return err
 		}
