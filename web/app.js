@@ -126,13 +126,15 @@ function renderUpstreams(us) {
 
 function upstreamCard(u) {
   const id = u.id;
-  return `<div class="border rounded p-2 flex items-center gap-2 flex-wrap" data-upstream-card data-upstream-id="${id}">
-    <input class="border rounded px-2 py-1 text-xs" style="width:6rem" data-field="name" value="${esc(u.name)}" placeholder="名称" />
-    <input class="border rounded px-2 py-1 text-xs flex-1" style="min-width:12rem" data-field="wsUrl" value="${esc(u.wsUrl)}" placeholder="wss://host:port/ws" />
-    <input class="border rounded px-2 py-1 text-xs" style="width:6rem" data-field="wsKey" value="${esc(u.wsKey)}" placeholder="密钥(可选)" />
-    <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input type="checkbox" data-field="enabled" ${u.enabled?"checked":""} /><span class="switch-track"></span></span></label>
-    <span class="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border bg-gray-100 text-gray-500" data-upstream-status="${id}">-</span>
-    <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete-upstream" data-upstream-id="${id}">✕</button>
+  return `<div class="border rounded-lg p-3 bg-white" data-upstream-card data-upstream-id="${id}">
+    <div class="flex items-center gap-2 flex-wrap">
+      <input class="border rounded px-2 py-1 text-xs font-semibold" style="width:7rem" data-field="name" value="${esc(u.name)}" placeholder="名称" />
+      <input class="border rounded px-2 py-1 text-xs flex-1" style="min-width:14rem" data-field="wsUrl" value="${esc(u.wsUrl)}" placeholder="wss://host:port/ws" />
+      <input class="border rounded px-2 py-1 text-xs" style="width:7rem" data-field="wsKey" value="${esc(u.wsKey)}" placeholder="密钥(可选)" />
+      <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input type="checkbox" data-field="enabled" ${u.enabled?"checked":""} /><span class="switch-track"></span></span></label>
+      <span class="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border bg-gray-100 text-gray-500" data-upstream-status="${id}">-</span>
+      <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete-upstream" data-upstream-id="${id}">✕</button>
+    </div>
   </div>`;
 }
 
