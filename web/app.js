@@ -99,7 +99,7 @@ function normalizeTasks(c) {
 function n(t) {
   t = t || {};
   return { id: String(t.id||"").trim()||rid("acct"), name: String(t.name||"").trim()||"Account", enabled: t.enabled!==false,
-    skipSignals: +t.skipSignals||0, timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
+    timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
     expiresAt: +t.expiresAt||0, httpProxyUrl: String(t.httpProxyUrl||""), apiUrl: String(t.apiUrl||""),
     method: String(t.method||"POST").toUpperCase(), headers: String(t.headers||""), body: String(t.body||""),
     valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||""),
@@ -149,56 +149,62 @@ function renderTasks(ts) {
 
 function card(t, idx) {
   const id = t.id;
-  return `<div class="bg-white border rounded-lg p-3" data-task-card="1" data-task-id="${id}">
-    <div class="flex items-center justify-between gap-2 pb-2 mb-2 border-b" style="border-color:var(--gl)">
-      <div class="flex items-center gap-2 min-w-0">
+  return `<div class="bg-white border rounded-lg p-3 space-y-2.5" data-task-card="1" data-task-id="${id}">
+    <!-- Header -->
+    <div class="flex items-center justify-between gap-2 pb-2 border-b" style="border-color:var(--gl)">
+      <div class="flex items-center gap-2">
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
-        <input class="border rounded px-2 py-1 text-xs font-semibold" style="max-width:9rem" data-field="name" value="${esc(t.name)}" />
+        <input class="border rounded px-2 py-1 text-xs font-semibold w-28" data-field="name" value="${esc(t.name)}" />
         <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>
-      <div class="flex items-center gap-1 flex-shrink-0">
+      <div class="flex items-center gap-1">
         <button class="rounded px-2 py-1 text-[11px] font-medium text-white" style="background:var(--g)" data-action="test-buy" data-task-id="${id}">BUY</button>
-        <button class="border rounded px-2 py-1 text-[11px] bg-white" data-action="test-sell" data-task-id="${id}">SELL</button>
-        <button class="border rounded px-2 py-1 text-[11px] bg-white" onclick="promptImportCurl('${id}')">cURL</button>
+        <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" data-action="test-sell" data-task-id="${id}">SELL</button>
+        <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" onclick="promptImportCurl('${id}')">cURL</button>
         <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete" data-task-id="${id}">✕</button>
       </div>
     </div>
+
+    <!-- Row: API URL -->
     <div class="flex gap-2 items-end">
       <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">API URL</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." /></div>
       <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">Method</label><select class="border rounded w-full px-2 py-1 text-xs bg-white" data-field="method">${["GET","POST","PUT","DELETE"].map(m=>`<option ${t.method===m?"selected":""}>${m}</option>`).join("")}</select></div>
       <div style="width:7rem"><label class="block text-[11px] text-gray-500 mb-0.5">代理</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="httpProxyUrl" value="${esc(t.httpProxyUrl)}" placeholder="可选" /></div>
     </div>
-    <div class="flex gap-2 items-start mt-2">
+
+    <!-- Row: Time ranges -->
+    <div class="flex gap-2 items-start">
       <div class="flex-1">
-        <label class="block text-[11px] text-gray-500 mb-0.5">⏰ 有效时间段 <span class="text-gray-400">留空=全天</span></label>
+        <label class="block text-[11px] text-gray-500 mb-0.5">⏰ 有效时间段 <span class="text-gray-400">(留空=全天)</span></label>
         <div class="space-y-1" data-time-ranges="1" data-task-id="${id}">${trHtml(id, t.timeRanges)}</div>
-        <button class="border rounded px-2 py-0.5 text-[10px] bg-white mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
+        <button class="border rounded px-2 py-0.5 text-[10px] bg-white hover:bg-gray-50 mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
       </div>
-      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Symbol过滤</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT,ETHUSDT" /></div>
+      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Symbol过滤</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT" /></div>
     </div>
-    <div class="mt-1.5">
-      <span class="text-[11px] text-gray-500 cursor-pointer select-none" onclick="this.nextElementSibling.classList.toggle('hidden')">▸ Headers & Body</span>
+
+    <!-- Collapsible: Headers & Body -->
+    <div>
+      <span class="text-[11px] text-gray-500 cursor-pointer select-none hover:text-gray-700" onclick="this.nextElementSibling.classList.toggle('hidden')">▸ Headers & Body</span>
       <div class="hidden grid gap-2 sm:grid-cols-2 mt-1">
-        <div><textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="3" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea></div>
-        <div><textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="3" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea></div>
+        <textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="4" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea>
+        <textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="4" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea>
       </div>
     </div>
-    <div class="flex gap-2 items-end mt-2">
-      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">buy→</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" /></div>
-      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">sell→</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" /></div>
-      <div style="width:4rem"><label class="block text-[11px] text-gray-500 mb-0.5">跳过</label><input type="number" min="0" class="border rounded w-full px-2 py-1 text-xs" data-field="skipSignals" value="${t.skipSignals||0}" /></div>
-      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">proba≥</label><input type="number" step="0.01" min="0" max="1" class="border rounded w-full px-2 py-1 text-xs" data-field="minProba" value="${t.minProba||0}" placeholder="0" /></div>
-      <div class="flex-1">
-        <label class="block text-[11px] text-gray-500 mb-0.5">过期</label>
-        <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
-        <div class="flex items-center gap-1">
-          <button class="border rounded px-2 py-0.5 text-[10px] bg-white" onclick="setExpires('${id}',1)">1d</button>
-          <button class="border rounded px-2 py-0.5 text-[10px] bg-white" onclick="setExpires('${id}',7)">7d</button>
-          <button class="border rounded px-2 py-0.5 text-[10px] bg-white" onclick="setExpires('${id}',30)">30d</button>
-          <button class="border rounded px-2 py-0.5 text-[10px] bg-white border-red-200 text-red-600" onclick="setExpires('${id}',0)">清除</button>
+
+    <!-- Row: buy / sell / proba / 过期 -->
+    <div class="flex items-center gap-2 flex-wrap">
+      <div class="flex items-center gap-1"><span class="text-[11px] text-gray-500 flex-shrink-0">buy→</span><input class="border rounded px-2 py-1 text-xs" style="width:5rem" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" /></div>
+      <div class="flex items-center gap-1"><span class="text-[11px] text-gray-500 flex-shrink-0">sell→</span><input class="border rounded px-2 py-1 text-xs" style="width:5rem" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" /></div>
+      <div class="flex items-center gap-0.5"><span class="text-[11px] text-gray-500 flex-shrink-0">proba≥</span><input type="number" step="0.01" min="0" max="1" class="border rounded px-1.5 py-1 text-xs" style="width:4rem" data-field="minProba" value="${t.minProba||0}" placeholder="0" /></div>
+      <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
+      <div class="expires-row">
+        <span id="expires-display-${id}" class="expires-display">${fmtDT(t.expiresAt)}</span>
+        <div class="expires-btns">
+          <button class="expires-btn" onclick="setExpires('${id}',1)">+1d</button>
+          <button class="expires-btn" onclick="setExpires('${id}',5)">+5d</button>
         </div>
-        <span id="expires-display-${id}" class="text-[10px] text-gray-400">${fmtDT(t.expiresAt)}</span>
+        <button class="expires-clear" onclick="setExpires('${id}',0)">清除</button>
       </div>
     </div>
   </div>`;
@@ -218,7 +224,7 @@ function collectTasks() {
     const id=card.getAttribute("data-task-id")||rid("acct");
     const g=f=>{const e=card.querySelector(`[data-field="${f}"]`);return e?e.value:""};
     const gc=f=>{const e=card.querySelector(`[data-field="${f}"]`);return !!(e&&e.checked)};
-    return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"), skipSignals:+g("skipSignals")||0,
+    return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"), 
       timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
       httpProxyUrl: String(g("httpProxyUrl")||"").trim(), apiUrl: String(g("apiUrl")||"").trim(),
       method: String(g("method")||"POST").trim().toUpperCase(), headers: String(g("headers")||""), body: String(g("body")||""),
@@ -303,12 +309,12 @@ function fmtDT(u) { if(!u)return"未设置";const d=new Date(u*1000),p=n=>String
 
 function trHtml(tid, ranges) {
   const rs = ntr(ranges);
-  if (!rs.length) return '<div class="time-range-empty">全天</div>';
-  return rs.map((r,i) => `<div class="flex items-center gap-1">
-    <input class="border rounded px-2 py-1 text-[11px]" style="width:5rem" data-time-range-field="start" data-index="${i}" value="${esc(r.start)}" placeholder="09:00" />
-    <span class="text-[11px] text-gray-500">→</span>
-    <input class="border rounded px-2 py-1 text-[11px]" style="width:5rem" data-time-range-field="end" data-index="${i}" value="${esc(r.end)}" placeholder="17:00" />
-    <button class="border rounded px-1.5 py-0.5 text-[10px] bg-white text-red-600" data-action="delete-time-range" data-task-id="${tid}" data-index="${i}">✕</button>
+  if (!rs.length) return '<div class="border rounded px-2 py-1 text-xs text-gray-400 bg-gray-50">全天</div>';
+  return rs.map((r,i) => `<div class="flex items-center gap-1.5">
+    <input class="border rounded px-2 py-1 text-[11px] w-20" data-time-range-field="start" data-index="${i}" value="${esc(r.start)}" placeholder="09:00" />
+    <span class="text-[11px] text-gray-400">→</span>
+    <input class="border rounded px-2 py-1 text-[11px] w-20" data-time-range-field="end" data-index="${i}" value="${esc(r.end)}" placeholder="17:00" />
+    <button class="border rounded px-1.5 py-0.5 text-[10px] bg-white text-red-600 hover:bg-red-50" data-action="delete-time-range" data-task-id="${tid}" data-index="${i}">✕</button>
   </div>`).join("\n");
 }
 
@@ -368,25 +374,30 @@ function parseCurl(s) {
 // ── Log ──
 
 function initLogs() {
-  const src = new EventSource("/api/logs/stream");
-  src.onmessage = e => {
-    try { const d=JSON.parse(e.data); log(`${d.level||"INFO"} ${d.tag||""} ${d.msg||""}`, d.level); }
-    catch { log(e.data, "INFO"); }
+  const container = document.getElementById("log-container");
+  const es = new EventSource("/api/logs/stream");
+  es.onopen = () => { if (container) container.innerHTML = ""; };
+  es.onmessage = (ev) => {
+    try { const entry = JSON.parse(ev.data); appendLog(entry); }
+    catch(e) { console.error("parse log entry error", e, ev.data); }
   };
-  src.onerror = () => { /* retry built-in */ };
+  es.onerror = () => { console.debug("SSE disconnected, auto-reconnect"); };
 }
 
-function log(msg, level) {
-  const c = $("log-container"); if (!c) return;
-  const t = new Date().toLocaleTimeString();
-  const cls = level==="ERROR"?"text-red-600":level==="WARNING"?"text-amber-600":"text-gray-700";
-  const div = document.createElement("div");
-  div.className = `py-0.5 ${cls}`;
-  div.textContent = `[${t}] ${msg}`;
-  c.appendChild(div);
-  c.scrollTop = c.scrollHeight;
-  // Keep max 500 entries
-  while (c.children.length > 500) c.firstChild.remove();
+function appendLog(entry) {
+  const container = document.getElementById("log-container");
+  if (!container) return;
+  const row = document.createElement("div");
+  row.className = "flex gap-2 items-start text-[11px] leading-relaxed";
+  const timeStr = entry.time ? new Date(entry.time).toLocaleTimeString("zh-CN",{hour12:false}) : new Date().toLocaleTimeString("zh-CN",{hour12:false});
+  const level = (entry.level||"INFO").toUpperCase();
+  const source = entry.source||"app";
+  const msg = entry.message||"";
+  const colorClass = level==="ERROR"?"text-red-600":level==="DEBUG"?"text-blue-600":"text-green-700";
+  row.innerHTML = `<span class="text-gray-400 shrink-0">${timeStr}</span><span class="shrink-0 ${colorClass}">[${level}]</span><span class="shrink-0 text-gray-400">${source}</span><span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${esc(msg)}</span>`;
+  container.appendChild(row);
+  while (container.children.length > 500) container.removeChild(container.firstChild);
+  container.scrollTop = container.scrollHeight;
 }
 
 // ── Helpers ──
