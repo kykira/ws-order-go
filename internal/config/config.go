@@ -13,6 +13,8 @@ type ServerConfig struct {
 }
 
 type UpstreamConfig struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
 	WSUrl   string `json:"wsUrl"`
 	WSKey   string `json:"wsKey"`
 	Enabled bool   `json:"enabled"`
@@ -44,11 +46,11 @@ type TaskConfig struct {
 }
 
 type Config struct {
-	Server   ServerConfig   `json:"server"`
-	Upstream UpstreamConfig `json:"upstream"`
-	WSServer WSServerConfig `json:"wsServer"`
-	Dispatch string         `json:"dispatch"` // "all", "random", or "round-robin", default "round-robin"
-	Tasks    []TaskConfig   `json:"tasks"`
+	Server    ServerConfig     `json:"server"`
+	Upstreams []UpstreamConfig `json:"upstreams"`
+	WSServer  WSServerConfig   `json:"wsServer"`
+	Dispatch  string           `json:"dispatch"`
+	Tasks     []TaskConfig     `json:"tasks"`
 }
 
 type Manager struct {
@@ -60,11 +62,7 @@ type Manager struct {
 func DefaultConfig() Config {
 	return Config{
 		Server: ServerConfig{Port: 9946},
-		Upstream: UpstreamConfig{
-			WSUrl:   "",
-			WSKey:   "",
-			Enabled: false,
-		},
+		Upstreams: []UpstreamConfig{},
 		WSServer: WSServerConfig{
 			Enabled:   true,
 			Path:      "/ws",

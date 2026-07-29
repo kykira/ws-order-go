@@ -31,28 +31,23 @@ func main() {
 
 	orderClient := order.NewClient(logger)
 	processor := signals.NewProcessor(cfgManager, logger, orderClient)
-	wsCli := wsclient.NewClient(cfgManager, logger, processor)
+	wsMgr := wsclient.NewManager(cfgManager, logger, processor)
 	wsSrv := wsserver.NewServer(cfgManager, logger, processor)
 
-	// Start upstream WS client only if enabled in config
-	cfg := cfgManager.Get()
-	if cfg.Upstream.Enabled && cfg.Upstream.WSUrl != "" {
-		logger.Info("main", "upstream WS client mode enabled, starting...")
-		wsCli.Start()
-	} else {
-		logger.Info("main", "upstream WS client disabled (no wsUrl or not enabled)")
-	}
+	// 同步上游配置并启动连接
+	wsMgr.Sync()
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsCli, wsSrv, orderClient))
-	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsCli))
-	mux.HandleFunc("/api/ws/disconnect", handleWSDisconnect(cfgManager, logger, wsCli))
-	mux.HandleFunc("/api/ws/status", handleWSStatus(wsCli, wsSrv))
+	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsMgr, wsSrv, orderClient))
+	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsMgr))
+	mux.HandleFunc("/api/ws/disconnect", handleWSDisconnect(cfgManager, logger, wsMgr))
+	mux.HandleFunc("/api/ws/status", handleWSStatus(wsMgr, wsSrv))
 	mux.HandleFunc("/api/tasks/test", handleTestTask(cfgManager, logger, orderClient))
 	mux.HandleFunc("/api/logs/stream", handleLogsStream(logger))
 
 	// WS server endpoint — path is configurable
+	cfg := cfgManager.Get()
 	wsPath := cfg.WSServer.Path
 	if wsPath == "" {
 		wsPath = "/ws"
@@ -93,7 +88,7 @@ func main() {
 	}
 
 	logger.Info("main", "shutting down...")
-	wsCli.Stop()
+	wsMgr.StopAll()
 	processor.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -101,7 +96,7 @@ func main() {
 	_ = srv.Shutdown(shutdownCtx)
 }
 
-func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.Client, wsSrv *wsserver.Server, orderClient *order.Client) http.HandlerFunc {
+func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager, wsSrv *wsserver.Server, orderClient *order.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 
@@ -111,10 +106,10 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 			_ = json.NewEncoder(w).Encode(cfg)
 		case http.MethodPost:
 			var payload struct {
-				Upstream config.UpstreamConfig `json:"upstream"`
-				WSServer config.WSServerConfig `json:"wsServer"`
-				Dispatch string               `json:"dispatch"`
-				Tasks    []config.TaskConfig   `json:"tasks"`
+				Upstreams []config.UpstreamConfig `json:"upstreams"`
+				WSServer  config.WSServerConfig   `json:"wsServer"`
+				Dispatch  string                  `json:"dispatch"`
+				Tasks     []config.TaskConfig     `json:"tasks"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
@@ -132,7 +127,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 				return
 			}
 			if err := cfgMgr.Update(func(c *config.Config) {
-				c.Upstream = payload.Upstream
+				c.Upstreams = payload.Upstreams
 				c.WSServer = payload.WSServer
 				c.Dispatch = payload.Dispatch
 				c.Tasks = payload.Tasks
@@ -147,7 +142,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 			orderClient.ClearCache()
 
 			logger.Info("config", "config updated via API")
-			wsCli.ForceDisconnect()
+			wsMgr.Sync()
 			_, _ = w.Write([]byte(`{"status":"ok"}`))
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
@@ -155,48 +150,50 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.C
 	}
 }
 
-func handleWSConnect(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.Client) http.HandlerFunc {
+func handleWSConnect(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		_ = cfgMgr.Update(func(c *config.Config) {
-			c.Upstream.Enabled = true
+			// Multi-upstream: Sync will handle
 		})
 		logger.Info("wsclient", "manual connect requested")
-		wsCli.ForceDisconnect()
+		wsMgr.Sync()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}
 }
 
-func handleWSDisconnect(cfgMgr *config.Manager, logger *logs.Logger, wsCli *wsclient.Client) http.HandlerFunc {
+func handleWSDisconnect(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		_ = cfgMgr.Update(func(c *config.Config) {
-			c.Upstream.Enabled = false
+			// Multi-upstream: Sync will handle
 		})
 		logger.Info("wsclient", "manual disconnect requested")
-		wsCli.ForceDisconnect()
+		wsMgr.Sync()
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}
 }
 
-func handleWSStatus(wsCli *wsclient.Client, wsSrv *wsserver.Server) http.HandlerFunc {
+func handleWSStatus(wsMgr *wsclient.Manager, wsSrv *wsserver.Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		upstreamStatus := wsMgr.Status()
 		status := map[string]any{
-			"connected":     wsCli.IsConnected(),
+			"connected":     wsMgr.IsConnected(),
 			"wsServerConns": wsSrv.ConnCount(),
+			"upstream":      upstreamStatus,
 		}
 		_ = json.NewEncoder(w).Encode(status)
 	}

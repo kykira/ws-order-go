@@ -80,19 +80,11 @@
 
   <!-- Upstream Client -->
   <div class="bg-white border rounded-lg p-3">
-    <h2 class="text-xs font-semibold mb-2 cursor-pointer select-none" onclick="this.parentElement.querySelector('.upstream-body').classList.toggle('hidden')">▾ 上游客户端</h2>
-    <div class="upstream-body grid gap-2 sm:grid-cols-3">
-      <div><label class="block text-[11px] text-gray-500 mb-0.5">WS URL</label><input id="upstreamWsUrl" class="border rounded w-full px-2 py-1 text-xs" placeholder="wss://..." /></div>
-      <div><label class="block text-[11px] text-gray-500 mb-0.5">密钥</label><input id="upstreamWsKey" class="border rounded w-full px-2 py-1 text-xs" placeholder="可选" /></div>
-      <div class="flex items-end gap-2">
-        <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input id="upstreamEnabled" type="checkbox" /><span class="switch-track"></span></span></label>
-        <span id="upstream-status" class="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border">未连接</span>
-      </div>
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-xs font-semibold cursor-pointer select-none" onclick="this.parentElement.parentElement.querySelector('.upstream-body').classList.toggle('hidden')">▾ 上游客户端</h2>
+      <button id="btn-add-upstream" class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50">+ 上游</button>
     </div>
-    <div class="mt-2 flex items-center gap-2">
-      <button id="btn-upstream-connect" class="border rounded px-3 py-1 text-[11px] bg-white hover:bg-green-50">连接</button>
-      <button id="btn-upstream-disconnect" class="border rounded px-3 py-1 text-[11px] bg-white hover:bg-red-50">断开</button>
-    </div>
+    <div id="upstreams-container" class="upstream-body space-y-2"></div>
   </div>
 
   <!-- Accounts -->

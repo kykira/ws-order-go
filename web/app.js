@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", () => { initConfig(); initActions(); initLogs(); });
 
 let stateTasks = [];
+let stateUpstreams = [];
 
 async function apiGet(p) { const r = await fetch(p); if (!r.ok) throw new Error(r.status); return r.json(); }
 async function apiPost(p, b) {
@@ -10,6 +11,12 @@ async function apiPost(p, b) {
 }
 
 function $(id) { return document.getElementById(id); }
+function rid(p) { return p+"-"+Math.random().toString(36).slice(2,8); }
+function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function getVal(id) { const e=$(id); return e?e.value:""; }
+function setVal(id,v) { const e=$(id); if(e)e.value=v??""; }
+function isChk(id) { const e=$(id); return !!(e&&e.checked); }
+function setChk(id,v) { const e=$(id); if(e)e.checked=!!v; }
 
 // ── Init ──
 
@@ -23,10 +30,11 @@ async function loadConfig() {
   setChk("wsServerEnabled", ws.enabled!==false);
   setChk("wsServerApplySkip", !!ws.applySkip);
   updateWSEndpoint();
-  const up = c.upstream || {};
-  setVal("upstreamWsUrl", up.wsUrl||"");
-  setVal("upstreamWsKey", up.wsKey||"");
-  setChk("upstreamEnabled", !!up.enabled);
+  stateUpstreams = (c.upstreams || []).map(u => ({
+    id: u.id||rid("up"), name: u.name||"", wsUrl: u.wsUrl||"", wsKey: u.wsKey||"", enabled: !!u.enabled
+  }));
+  if (!stateUpstreams.length) stateUpstreams = [{ id:rid("up"), name:"", wsUrl:"", wsKey:"", enabled:false }];
+  renderUpstreams(stateUpstreams);
   const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
   stateTasks = normalizeTasks(c);
   renderTasks(stateTasks);
@@ -43,37 +51,44 @@ function initActions() {
       const c = JSON.parse(s); const ws = c.wsServer||{};
       setVal("wsServerPath", ws.path||"/ws"); setVal("wsServerKey", ws.key||"");
       setChk("wsServerEnabled", ws.enabled!==false); setChk("wsServerApplySkip", !!ws.applySkip); updateWSEndpoint();
-      const up = c.upstream||{};
-      setVal("upstreamWsUrl", up.wsUrl||""); setVal("upstreamWsKey", up.wsKey||"");
-      setChk("upstreamEnabled", !!up.enabled);
+      stateUpstreams = (c.upstreams||[]).map(u=>({id:u.id||rid("up"),name:u.name||"",wsUrl:u.wsUrl||"",wsKey:u.wsKey||"",enabled:!!u.enabled}));
+      if (!stateUpstreams.length) stateUpstreams = [{id:rid("up"),name:"",wsUrl:"",wsKey:"",enabled:false}];
+      renderUpstreams(stateUpstreams);
       const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
       stateTasks = normalizeTasks(c); renderTasks(stateTasks); log("JSON 已导入");
     } catch(e) { alert("解析失败: "+e.message); }
   });
   $("btn-add-task")?.addEventListener("click", () => { stateTasks = collectTasks(); stateTasks.push(defaultTask()); renderTasks(stateTasks); });
+  $("btn-add-upstream")?.addEventListener("click", () => {
+    stateUpstreams.push({ id:rid("up"), name:"", wsUrl:"", wsKey:"", enabled:false });
+    renderUpstreams(stateUpstreams);
+  });
   $("wsServerPath")?.addEventListener("input", updateWSEndpoint);
   $("wsServerKey")?.addEventListener("input", updateWSEndpoint);
-
-  // Upstream connect/disconnect
-  $("btn-upstream-connect")?.addEventListener("click", async () => {
-    try { await apiPost("/api/ws/connect"); updateWSStatus(); log("上游连接请求已发送"); }
-    catch(e) { log("连接失败: "+e.message, "ERROR"); }
-  });
-  $("btn-upstream-disconnect")?.addEventListener("click", async () => {
-    try { await apiPost("/api/ws/disconnect"); updateWSStatus(); log("上游已断开"); }
-    catch(e) { log("断开失败: "+e.message, "ERROR"); }
-  });
 }
 
 // ── Config ──
 
 function collectPayload() {
-  const upstream = { wsUrl: getVal("upstreamWsUrl")||"", wsKey: getVal("upstreamWsKey")||"", enabled: isChk("upstreamEnabled") };
   const wsServer = { path: getVal("wsServerPath")||"/ws", key: getVal("wsServerKey")||"", enabled: isChk("wsServerEnabled"), applySkip: isChk("wsServerApplySkip") };
   const dispatch = $("dispatchMode")?.value || "round-robin";
+  const upstreams = collectUpstreams();
   const tasks = collectTasks().map(n);
   validate(tasks); stateTasks = tasks;
-  return { upstream, wsServer, dispatch, tasks };
+  return { upstreams, wsServer, dispatch, tasks };
+}
+
+function collectUpstreams() {
+  return [...document.querySelectorAll('[data-upstream-card]')].map(card => {
+    const id = card.getAttribute("data-upstream-id");
+    return {
+      id: id || rid("up"),
+      name: card.querySelector('[data-field="name"]')?.value || "",
+      wsUrl: card.querySelector('[data-field="wsUrl"]')?.value || "",
+      wsKey: card.querySelector('[data-field="wsKey"]')?.value || "",
+      enabled: card.querySelector('[data-field="enabled"]')?.checked || false
+    };
+  });
 }
 
 function normalizeTasks(c) {
@@ -92,6 +107,34 @@ function n(t) {
 }
 
 function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:true, apiUrl:"https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order", method:"POST", headers:"Content-Type: application/json\nclienttype: web", body:'{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}', valueBuy:"LONG", valueSell:"SHORT" }); }
+
+// ── Upstream Render ──
+
+function renderUpstreams(us) {
+  const c = $("upstreams-container"); if (!c) return;
+  if (!us?.length) { c.innerHTML = '<div class="text-[11px] text-gray-400">暂无上游，点击"+ 上游"添加</div>'; return; }
+  c.innerHTML = us.map(u => upstreamCard(u)).join("\n");
+  // Bind delete buttons
+  c.querySelectorAll('[data-action="delete-upstream"]').forEach(btn => {
+    btn.addEventListener("click", () => {
+      const id = btn.getAttribute("data-upstream-id");
+      stateUpstreams = stateUpstreams.filter(u => u.id !== id);
+      renderUpstreams(stateUpstreams);
+    });
+  });
+}
+
+function upstreamCard(u) {
+  const id = u.id;
+  return `<div class="border rounded p-2 flex items-center gap-2 flex-wrap" data-upstream-card data-upstream-id="${id}">
+    <input class="border rounded px-2 py-1 text-xs" style="width:6rem" data-field="name" value="${esc(u.name)}" placeholder="名称" />
+    <input class="border rounded px-2 py-1 text-xs flex-1" style="min-width:12rem" data-field="wsUrl" value="${esc(u.wsUrl)}" placeholder="wss://host:port/ws" />
+    <input class="border rounded px-2 py-1 text-xs" style="width:6rem" data-field="wsKey" value="${esc(u.wsKey)}" placeholder="密钥(可选)" />
+    <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input type="checkbox" data-field="enabled" ${u.enabled?"checked":""} /><span class="switch-track"></span></span></label>
+    <span class="inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border bg-gray-100 text-gray-500" data-upstream-status="${id}">-</span>
+    <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete-upstream" data-upstream-id="${id}">✕</button>
+  </div>`;
+}
 
 // ── Render ──
 
@@ -148,44 +191,15 @@ function card(t, idx) {
         <label class="block text-[11px] text-gray-500 mb-0.5">过期</label>
         <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
         <div class="flex items-center gap-1">
-          <span class="inline-flex items-center h-7 px-2 text-xs font-mono rounded border" style="background:var(--gl);color:var(--gt);border-color:var(--gb);min-width:8rem" id="expires-display-${id}">${fmtDT(t.expiresAt)}</span>
-          <span class="inline-flex border rounded overflow-hidden" style="border-color:var(--gb)">
-            <button class="h-7 px-2 text-xs border-r bg-white hover:bg-green-50" style="border-color:var(--gb);color:var(--gt)" onclick="setExpires('${id}',1)">+1d</button>
-            <button class="h-7 px-2 text-xs border-r bg-white hover:bg-green-50" style="border-color:var(--gb);color:var(--gt)" onclick="setExpires('${id}',3)">+3d</button>
-            <button class="h-7 px-2 text-xs bg-white hover:bg-green-50" style="color:var(--gt)" onclick="setExpires('${id}',7)">+7d</button>
-          </span>
-          <button class="h-7 px-2 text-xs border border-red-200 rounded bg-white text-red-600 hover:bg-red-50" onclick="setExpires('${id}',0)">清除</button>
+          <button class="border rounded px-2 py-0.5 text-[10px] bg-white" onclick="setExpires('${id}',1)">1d</button>
+          <button class="border rounded px-2 py-0.5 text-[10px] bg-white" onclick="setExpires('${id}',7)">7d</button>
+          <button class="border rounded px-2 py-0.5 text-[10px] bg-white" onclick="setExpires('${id}',30)">30d</button>
+          <button class="border rounded px-2 py-0.5 text-[10px] bg-white border-red-200 text-red-600" onclick="setExpires('${id}',0)">清除</button>
         </div>
+        <span id="expires-display-${id}" class="text-[10px] text-gray-400">${fmtDT(t.expiresAt)}</span>
       </div>
     </div>
   </div>`;
-}
-
-function trHtml(taskId, ranges) {
-  const list = ntr(ranges);
-  if (!list.length) return '<div class="time-range-empty">全天</div>';
-  return list.map((r,i) => `<div class="flex gap-1 items-center">
-    <select class="border rounded px-1 py-0.5 text-[11px] bg-white flex-1" data-time-range-field="start" data-task-id="${taskId}" data-index="${i}">${hopts(r.start)}</select>
-    <span class="text-[11px] text-gray-400">→</span>
-    <select class="border rounded px-1 py-0.5 text-[11px] bg-white flex-1" data-time-range-field="end" data-task-id="${taskId}" data-index="${i}">${hopts(r.end)}</select>
-    <button class="text-red-500 text-[11px] px-1" data-action="delete-time-range" data-task-id="${taskId}" data-index="${i}">✕</button></div>`).join("");
-}
-
-function hopts(sel) { let o='<option value="">--</option>'; const sv=String(sel||"").trim(); for(let h=0;h<24;h++){for(let m of['00','30']){const v=`${String(h).padStart(2,"0")}:${m}`;o+=`<option value="${v}" ${v===sv?"selected":""}>${v}</option>`;}} return o; }
-
-function bind(c) {
-  c.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", async ev => {
-    const b = ev.currentTarget, a = b.getAttribute("data-action"), tid = b.getAttribute("data-task-id");
-    if (!tid) return;
-    if (a==="delete") { stateTasks = collectTasks().filter(x=>x.id!==tid); renderTasks(stateTasks); return; }
-    if (a==="add-time-range") { stateTasks = collectTasks(); try { updTR(tid, r=>r.length>=4?(()=>{throw new Error("最多4段")})():[...r,{start:"",end:""}]); } catch(e) { log(e.message,"ERROR"); return; } renderTasks(stateTasks); return; }
-    if (a==="delete-time-range") { const i=+b.getAttribute("data-index")||0; stateTasks=collectTasks(); updTR(tid, r=>r.filter((_,j)=>j!==i)); renderTasks(stateTasks); return; }
-    if (a==="test-buy"||a==="test-sell") { const act=a==="test-buy"?"buy":"sell"; try { await apiPost("/api/tasks/test",{taskId:tid,action:act}); log(`测试 ${act} → ${tid}`); } catch(e) { log("测试失败: "+e.message,"ERROR"); } }
-  }));
-  c.querySelectorAll("[data-time-range-field]").forEach(el => el.addEventListener("change", ev => {
-    const inp=ev.currentTarget, tid=inp.getAttribute("data-task-id"), idx=+inp.getAttribute("data-index")||0, f=inp.getAttribute("data-time-range-field");
-    if (!tid||!f) return; stateTasks=collectTasks(); updTR(tid, r=>r.map((item,i)=>i===idx?{...item,[f]:inp.value}:item));
-  }));
 }
 
 // ── Time ranges ──
@@ -193,7 +207,7 @@ function bind(c) {
 function ntr(r) { return Array.isArray(r)?r.map(x=>({start:String(x?.start||"").trim(),end:String(x?.end||"").trim()})):[]; }
 function ctr(r) { return ntr(r).filter(x=>x.start||x.end); }
 function updTR(tid, fn) { const t=stateTasks.find(x=>x.id===tid); if(t) t.timeRanges=ntr(fn(ntr(t.timeRanges))); }
-function colTR(card) { return [...card.querySelectorAll("[data-time-range-field='start']")].map(s=>{const i=s.getAttribute("data-index"),e=card.querySelector(`[data-time-range-field="end"][data-index="${cssEscape(i)}"]`);return{start:String(s.value||"").trim(),end:String(e?.value||"").trim()}}); }
+function colTR(card) { return [...card.querySelectorAll("[data-time-range-field='start']")].map(s=>{const i=s.getAttribute("data-index"),e=card.querySelector(`[data-time-range-field=\"end\"][data-index=\"${cssEscape(i)}\"]`);return{start:String(s.value||"").trim(),end:String(e?.value||"").trim()}}); }
 
 // ── Collect ──
 
@@ -201,7 +215,7 @@ function collectTasks() {
   return [...document.querySelectorAll('[data-task-card="1"]')].map(card => {
     const id=card.getAttribute("data-task-id")||rid("acct");
     const g=f=>{const e=card.querySelector(`[data-field="${f}"]`);return e?e.value:""};
-    const gc=f=>{const e=card.querySelector(`[data-field="${f}"]`);return!!(e&&e.checked)};
+    const gc=f=>{const e=card.querySelector(`[data-field="${f}"]`);return !!(e&&e.checked)};
     return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"), skipSignals:+g("skipSignals")||0,
       timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
       httpProxyUrl: String(g("httpProxyUrl")||"").trim(), apiUrl: String(g("apiUrl")||"").trim(),
@@ -228,12 +242,15 @@ async function updateWSStatus() {
       el.innerHTML = `接入 <strong class="ml-0.5">${n}</strong>`;
       el.className = `inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${n>0?'bg-green-50 text-green-700 border-green-200':'bg-gray-100 text-gray-500'}`;
     }
-    const up = $("upstream-status");
-    if (up) {
-      const connected = !!s.connected;
-      up.textContent = connected ? "已连接" : "未连接";
-      up.className = `inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${connected?'bg-green-50 text-green-700 border-green-200':'bg-gray-100 text-gray-500'}`;
-    }
+    // Update each upstream status
+    const items = s.upstream?.items || [];
+    items.forEach(u => {
+      const st = document.querySelector(`[data-upstream-status="${u.id}"]`);
+      if (st) {
+        st.textContent = u.connected ? "已连接" : "未连接";
+        st.className = `inline-flex items-center text-[11px] px-2 py-0.5 rounded-full border ${u.connected?'bg-green-50 text-green-700 border-green-200':'bg-gray-100 text-gray-500'}`;
+      }
+    });
   } catch(e) {}
 }
 
@@ -280,6 +297,48 @@ function setExpires(tid, days) {
 window.setExpires = setExpires;
 function fmtDT(u) { if(!u)return"未设置";const d=new Date(u*1000),p=n=>String(n).padStart(2,"0");return`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 
+// ── Time range HTML ──
+
+function trHtml(tid, ranges) {
+  const rs = ntr(ranges);
+  if (!rs.length) return '<div class="time-range-empty">全天</div>';
+  return rs.map((r,i) => `<div class="flex items-center gap-1">
+    <input class="border rounded px-2 py-1 text-[11px]" style="width:5rem" data-time-range-field="start" data-index="${i}" value="${esc(r.start)}" placeholder="09:00" />
+    <span class="text-[11px] text-gray-500">→</span>
+    <input class="border rounded px-2 py-1 text-[11px]" style="width:5rem" data-time-range-field="end" data-index="${i}" value="${esc(r.end)}" placeholder="17:00" />
+    <button class="border rounded px-1.5 py-0.5 text-[10px] bg-white text-red-600" data-action="delete-time-range" data-task-id="${tid}" data-index="${i}">✕</button>
+  </div>`).join("\n");
+}
+
+// ── Bind events ──
+
+function bind(container) {
+  container.querySelectorAll('[data-action="delete"]').forEach(b => b.addEventListener("click", () => {
+    const id = b.getAttribute("data-task-id");
+    stateTasks = stateTasks.filter(t => t.id !== id);
+    renderTasks(stateTasks);
+  }));
+  container.querySelectorAll('[data-action="test-buy"]').forEach(b => b.addEventListener("click", () => testTask(b, "buy")));
+  container.querySelectorAll('[data-action="test-sell"]').forEach(b => b.addEventListener("click", () => testTask(b, "sell")));
+  container.querySelectorAll('[data-action="add-time-range"]').forEach(b => b.addEventListener("click", () => {
+    const tid = b.getAttribute("data-task-id");
+    updTR(tid, rs => { rs.push({start:"",end:""}); return rs; });
+    renderTasks(stateTasks);
+  }));
+  container.querySelectorAll('[data-action="delete-time-range"]').forEach(b => b.addEventListener("click", () => {
+    const tid = b.getAttribute("data-task-id"), idx = +b.getAttribute("data-index");
+    updTR(tid, rs => rs.filter((_,i) => i !== idx));
+    renderTasks(stateTasks);
+  }));
+}
+
+async function testTask(btn, action) {
+  const tid = btn.getAttribute("data-task-id");
+  const symbol = prompt("Symbol:", "BTCUSDT"); if (!symbol) return;
+  try { await apiPost("/api/tasks/test", { taskId: tid, action, symbol }); log(`测试 ${action} 已发送`); }
+  catch(e) { log(`测试失败: ${e.message}`, "ERROR"); }
+}
+
 // ── cURL ──
 
 function promptImportCurl(tid) {
@@ -287,47 +346,47 @@ function promptImportCurl(tid) {
   try{const p=parseCurl(s);const c=document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);if(!c)return;
     const set=(f,v)=>{const e=c.querySelector(`[data-field="${f}"]`);if(e)e.value=v??"";};
     if(p.url)set("apiUrl",p.url);if(p.method)set("method",p.method);if(p.headers)set("headers",p.headers);if(p.body)set("body",p.body);
-    log(`cURL → ${tid}`);}catch(e){alert("解析失败: "+e.message);}
+    log("cURL 已导入");}catch(e){alert("解析失败: "+e.message);}
 }
-function parseCurl(s){
-  const r={method:"GET",url:"",headers:"",body:""};s=s.replace(/\\\r?\n/g," ");
-  const u=s.match(/https?:\/\/[^\s'"]+/i);if(u)r.url=u[0].replace(/`/g,"");
-  const m=s.match(/(?:-X|--request)\s+['"]?([A-Za-z]+)['"]?/);if(m)r.method=m[1].toUpperCase();
-  let hs=[];const hr=/(?:-H|--header)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;let h;
-  while((h=hr.exec(s))!==null) hs.push((h[2]||h[3]||"").replace(/`/g,"").trim());
-  const cr=/(?:-b|--cookie)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/gi;
-  while((h=cr.exec(s))!==null){const c=(h[2]||h[3]||"").replace(/`/g,"").trim();if(c)hs.push("Cookie: "+c);}
-  r.headers=hs.join("\n");
-  const br=/(?:-d|--data|--data-raw|--data-binary)\s+('([^'\\]*(?:\\.[^'\\]*)*)'|"([^"\\]*(?:\\.[^'\\]*)*)")/i;
-  const bm=s.match(br);if(bm){r.body=bm[2]||bm[3]||"";if(!m)r.method="POST";}
+
+function parseCurl(s) {
+  s=s.replace(/\\\n/g," ").replace(/\n/g," ");
+  const r={url:"",method:"GET",headers:"",body:""};
+  const um=/['"]?(https?:\/\/[^\s'"]+)['"]?/.exec(s); if(um) r.url=um[1];
+  const xm=/-X\s+(\w+)/i.exec(s); if(xm) r.method=xm[1].toUpperCase();
+  const hs=[],hm=/['"]?([A-Za-z0-9._-]+):\s*([^'"]+)/g; let mh;
+  while((mh=hm.exec(s))!==null) hs.push(`${mh[1]}: ${mh[2].replace(/['"]$/,"")}`);
+  if(hs.length) r.headers=hs.join("\n");
+  const dm=/--data(?:-raw|-binary)?\s+['"]([^'"]+)['"]/.exec(s)||/-d\s+['"]([^'"]+)['"]/.exec(s);
+  if(dm) r.body=dm[1]||dm[2];
+  const cm=/['"]?([A-Za-z._-]+=[^;]+)/.exec(s); if(cm&&r.headers.indexOf("Cookie")<0) r.headers=(r.headers?r.headers+"\n":"")+`Cookie: ${cm[1]}`;
   return r;
 }
 
-// ── Logs ──
+// ── Log ──
 
 function initLogs() {
-  const c=$("log-container");const es=new EventSource("/api/logs/stream");
-  es.onopen=()=>{if(c)c.innerHTML="";};
-  es.onmessage=ev=>{try{appendLog(JSON.parse(ev.data));}catch(e){console.error(e);}};
-  es.onerror=()=>{};
+  const src = new EventSource("/api/logs/stream");
+  src.onmessage = e => {
+    try { const d=JSON.parse(e.data); log(`${d.level||"INFO"} ${d.tag||""} ${d.msg||""}`, d.level); }
+    catch { log(e.data, "INFO"); }
+  };
+  src.onerror = () => { /* retry built-in */ };
 }
-function appendLog(e) {
-  const c=$("log-container");if(!c)return;
-  const r=document.createElement("div");r.className="flex gap-2 items-start text-[11px] leading-relaxed";
-  const t=e.time?new Date(e.time).toLocaleTimeString("zh-CN",{hour12:false}):new Date().toLocaleTimeString("zh-CN",{hour12:false});
-  const l=(e.level||"INFO").toUpperCase(),s=e.source||"",m=e.message||"";
-  const cl=l==="ERROR"?"text-red-600":l==="DEBUG"?"text-blue-600":"text-green-700";
-  r.innerHTML=`<span class="text-gray-400 shrink-0">${t}</span><span class="shrink-0 ${cl}">[${l}]</span><span class="shrink-0 text-gray-400">${esc(s)}</span><span class="flex-1 whitespace-pre-wrap break-words text-gray-700">${esc(m)}</span>`;
-  c.appendChild(r);while(c.children.length>500)c.removeChild(c.firstChild);c.scrollTop=c.scrollHeight;
+
+function log(msg, level) {
+  const c = $("log-container"); if (!c) return;
+  const t = new Date().toLocaleTimeString();
+  const cls = level==="ERROR"?"text-red-600":level==="WARNING"?"text-amber-600":"text-gray-700";
+  const div = document.createElement("div");
+  div.className = `py-0.5 ${cls}`;
+  div.textContent = `[${t}] ${msg}`;
+  c.appendChild(div);
+  c.scrollTop = c.scrollHeight;
+  // Keep max 500 entries
+  while (c.children.length > 500) c.firstChild.remove();
 }
-function log(msg, lv) { appendLog({ time: new Date().toISOString(), level: lv||"INFO", source: "ui", message: msg }); }
 
 // ── Helpers ──
 
-function rid(p) { try{return crypto?.randomUUID?.()||`${p}-${Date.now()}-${Math.floor(Math.random()*1e6)}`;}catch{return p+"-"+Date.now();} }
-function cssEscape(s) { return String(s).replace(/"/g,'\\"'); }
-function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
-function setVal(id,v) { const e=$(id); if(e) e.value = v??""; }
-function getVal(id) { const e=$(id); return e?e.value:""; }
-function setChk(id,v) { const e=$(id); if(e) e.checked=!!v; }
-function isChk(id) { const e=$(id); return !!e?.checked; }
+function cssEscape(s) { return CSS.escape(String(s)); }
