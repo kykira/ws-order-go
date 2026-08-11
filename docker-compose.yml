@@ -5,8 +5,7 @@ services:
     image: ghcr.io/kykira/ws-order-go:latest
     container_name: ws-order-go
     restart: unless-stopped
-    ports:
-      - "9946:9946"
+    network_mode: host
     environment:
       - WSORDER_PORT=9946
     volumes:
