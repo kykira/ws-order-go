@@ -42,8 +42,8 @@ async function loadConfig() {
 
 function initActions() {
   $("btn-save-config")?.addEventListener("click", async () => {
-    try { await apiPost("/api/config", collectPayload()); log("配置已保存"); await loadConfig(); }
-    catch(e) { log("保存失败: "+e.message, "ERROR"); }
+    try { await apiPost("/api/config", collectPayload()); showToast("配置已保存"); await loadConfig(); }
+    catch(e) { showToast("保存失败: "+e.message, "error"); }
   });
   $("btn-import-json")?.addEventListener("click", () => {
     const s = prompt("粘贴 config.json:"); if (!s) return;
@@ -159,6 +159,7 @@ function card(t, idx) {
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>
       <div class="flex items-center gap-1">
+        <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" onclick="promptImportToken('${id}')">Token</button>
         <button class="rounded px-2 py-1 text-[11px] font-medium text-white" style="background:var(--g)" data-action="test-buy" data-task-id="${id}">BUY</button>
         <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" data-action="test-sell" data-task-id="${id}">SELL</button>
         <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" onclick="promptImportCurl('${id}')">cURL</button>
@@ -357,21 +358,60 @@ function promptImportCurl(tid) {
     log("cURL 已导入");}catch(e){alert("解析失败: "+e.message);}
 }
 
+function promptImportToken(tid) {
+  const s=prompt("粘贴 curl:");if(!s)return;
+  try{const p=parseCurl(s);const c=document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);if(!c)return;
+    const found=[];
+    for(const line of (p.headers||"").split("\n")){
+      const m=/^([^:]+):\s*(.*)$/.exec(line.trim());if(!m)continue;
+      if(m[1].trim().toLowerCase()==="csrftoken"){found.push(["csrftoken",m[2].trim()]);break;}
+    }
+    const cl=(p.headers||"").split("\n").find(l=>/^[Cc]ookie:/.test(l));
+    const pm=cl&&/p20t=[^;\s]*/.exec(cl);
+    if(pm)found.push(["Cookie",pm[0]]);
+    if(!found.length){alert("未解析到 csrftoken/p20t");return;}
+    const ta=c.querySelector('[data-field="headers"]');if(!ta)return;
+    mergeAuthHeaders(ta,found);
+    showToast("Token 已导入");
+  }catch(e){alert("解析失败: "+e.message);}
+}
+
+function mergeAuthHeaders(textarea, headers) {
+  const lines=(textarea.value||"").split("\n");
+  for(const [name,value] of headers){
+    const line=`${name}: ${value}`;
+    const idx=lines.findIndex(l=>{
+      const m=/^([^:]+):/.exec(l);return m&&m[1].trim().toLowerCase()===name.toLowerCase();
+    });
+    if(idx>=0){const om=/^([^:]+):/.exec(lines[idx]);lines[idx]=om?om[1].trim()+": "+value:line;}else lines.push(line);
+  }
+  textarea.value=lines.filter(Boolean).join("\n");
+}
+
+window.promptImportToken = promptImportToken;
+
 function parseCurl(s) {
   s=s.replace(/\\\n/g," ").replace(/\n/g," ");
-  const r={url:"",method:"GET",headers:"",body:""};
+  const r={url:"",method:"",headers:"",body:""};
   const um=/['"]?(https?:\/\/[^\s'"]+)['"]?/.exec(s); if(um) r.url=um[1];
   const xm=/-X\s+(\w+)/i.exec(s); if(xm) r.method=xm[1].toUpperCase();
   const hs=[],hm=/['"]?([A-Za-z0-9._-]+):\s*([^'"]+)/g; let mh;
   while((mh=hm.exec(s))!==null) hs.push(`${mh[1]}: ${mh[2].replace(/['"]$/,"")}`);
   if(hs.length) r.headers=hs.join("\n");
-  const dm=/--data(?:-raw|-binary)?\s+['"]([^'"]+)['"]/.exec(s)||/-d\s+['"]([^'"]+)['"]/.exec(s);
-  if(dm) r.body=dm[1]||dm[2];
-  const cm=/['"]?([A-Za-z._-]+=[^;]+)/.exec(s); if(cm&&r.headers.indexOf("Cookie")<0) r.headers=(r.headers?r.headers+"\n":"")+`Cookie: ${cm[1]}`;
+  const dm=/--data(?:-raw|-binary)?\s+(['"])([\s\S]*?)\1/.exec(s)||/-d\s+(['"])([\s\S]*?)\1/.exec(s);
+  if(dm) r.body=dm[2];
+  const bm=/-b\s+(['"])([\s\S]*?)\1/.exec(s);
+  if(bm&&!/[Cc]ookie:/.test(r.headers)) r.headers=(r.headers?r.headers+"\n":"")+`Cookie: ${bm[2]}`;
   return r;
 }
 
 // ── Log ──
+
+function log(msg, level) {
+  const container = document.getElementById("log-container");
+  if (!container) return;
+  appendLog({ time: new Date().toISOString(), level: level||"INFO", source: "app", message: msg });
+}
 
 function initLogs() {
   const container = document.getElementById("log-container");
@@ -398,6 +438,19 @@ function appendLog(entry) {
   container.appendChild(row);
   while (container.children.length > 500) container.removeChild(container.firstChild);
   container.scrollTop = container.scrollHeight;
+}
+
+// ── Toast ──
+
+function showToast(msg, type) {
+  const c = document.getElementById("toast-container");
+  if (!c) return;
+  const el = document.createElement("div");
+  el.className = `pointer-events-auto rounded px-4 py-2 text-xs text-white shadow-lg opacity-0 transition-opacity duration-300 ${type==="error"?"bg-red-600":"bg-green-600"}`;
+  el.textContent = msg;
+  c.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("opacity-100"));
+  setTimeout(() => { el.classList.remove("opacity-100"); setTimeout(() => el.remove(), 300); }, type==="error"?3500:2500);
 }
 
 // ── Helpers ──
