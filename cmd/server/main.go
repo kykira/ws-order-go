@@ -45,6 +45,7 @@ func main() {
 	mux.HandleFunc("/api/ws/status", handleWSStatus(wsMgr, wsSrv))
 	mux.HandleFunc("/api/tasks/test", handleTestTask(cfgManager, logger, orderClient))
 	mux.HandleFunc("/api/logs/stream", handleLogsStream(logger))
+	mux.HandleFunc("/api/login", handleLogin(cfgManager))
 
 	// WS server endpoint — path is configurable
 	cfg := cfgManager.Get()
@@ -64,7 +65,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      mux,
+		Handler:      authMiddleware(mux, cfgManager),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 	}
@@ -94,6 +95,60 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// authMiddleware 保护 /api/* 接口（登录接口除外）。静态页面与 WS 信号端点不在此列。
+func authMiddleware(next http.Handler, cfgMgr *config.Manager) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/login" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		pwd := cfgMgr.Get().Server.Password
+		if pwd == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if c, err := r.Cookie("wsorder_auth"); err == nil && c.Value == pwd {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	})
+}
+
+func handleLogin(cfgMgr *config.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid json"}`))
+			return
+		}
+		pwd := cfgMgr.Get().Server.Password
+		if pwd == "" || payload.Password != pwd {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"wrong password"}`))
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     "wsorder_auth",
+			Value:    pwd,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}
 }
 
 func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager, wsSrv *wsserver.Server, orderClient *order.Client) http.HandlerFunc {

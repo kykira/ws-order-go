@@ -1,7 +1,43 @@
-document.addEventListener("DOMContentLoaded", () => { initConfig(); initActions(); initLogs(); });
+document.addEventListener("DOMContentLoaded", async () => {
+  if (!(await ensureAuth())) return;
+  initConfig(); initActions(); initLogs();
+});
 
 let stateTasks = [];
 let stateUpstreams = [];
+
+// ── Auth ──
+
+async function ensureAuth() {
+  try {
+    const r = await fetch("/api/config");
+    if (r.status === 401) { showLogin(); return false; }
+    return true;
+  } catch (e) { showLogin(); return false; }
+}
+
+function showLogin() {
+  const ov = $("login-overlay"); if (!ov) return;
+  ov.classList.remove("hidden");
+  const pwd = $("login-password");
+  if (pwd) {
+    pwd.focus();
+    pwd.addEventListener("keydown", e => { if (e.key === "Enter") submitLogin(); });
+  }
+  $("login-submit")?.addEventListener("click", submitLogin);
+}
+
+async function submitLogin() {
+  const pwd = $("login-password")?.value || "";
+  const err = $("login-error");
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pwd }) });
+    if (r.ok) { location.reload(); return; }
+    if (err) err.classList.remove("hidden");
+  } catch (e) {
+    if (err) { err.textContent = "登录失败"; err.classList.remove("hidden"); }
+  }
+}
 
 async function apiGet(p) { const r = await fetch(p); if (!r.ok) throw new Error(r.status); return r.json(); }
 async function apiPost(p, b) {

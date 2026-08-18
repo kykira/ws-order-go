@@ -9,7 +9,8 @@ import (
 )
 
 type ServerConfig struct {
-	Port int `json:"port"`
+	Port     int    `json:"port"`
+	Password string `json:"password,omitempty"`
 }
 
 type UpstreamConfig struct {
