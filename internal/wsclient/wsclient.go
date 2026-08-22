@@ -327,7 +327,6 @@ func (c *Conn) readLoop(conn *websocket.Conn, logger *logs.Logger, processor *si
 
 		text := strings.TrimSpace(string(message))
 		if text == "ping" {
-			logger.Debug("wsclient", fmt.Sprintf("[%s] received ping", c.ID))
 			_ = conn.WriteMessage(websocket.TextMessage, []byte("pong"))
 			continue
 		}

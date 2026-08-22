@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,11 @@ import (
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
 )
+
+// ErrOrderLimitReached indicates the exchange rejected the order because the
+// account has reached its open order limit (Binance code 93420018) and all
+// local retries were exhausted.
+var ErrOrderLimitReached = errors.New("order limit reached after retries")
 
 type Client struct {
 	logger      *logs.Logger
@@ -149,6 +155,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 
 	// Retry up to 5 times on "Open order number has reached maximum limit" (93420018)
 	maxRetries := 5
+	sawOrderLimit := false
 	var lastRespBody []byte
 	var lastStatusCode int
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -157,6 +164,9 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 			c.logger.Info("order", fmt.Sprintf("%stask=[%s] retry %d/%d after %v", tag, task.Name, attempt, maxRetries-1, delay))
 			select {
 			case <-ctx.Done():
+				if sawOrderLimit {
+					return fmt.Errorf("%w: context deadline exceeded after order limit retries", ErrOrderLimitReached)
+				}
 				return ctx.Err()
 			case <-time.After(delay):
 			}
@@ -166,6 +176,9 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 
 		resp, err := httpClient.Do(httpReq)
 		if err != nil {
+			if sawOrderLimit && errors.Is(err, context.DeadlineExceeded) {
+				return fmt.Errorf("%w: http request deadline exceeded after order limit retries", ErrOrderLimitReached)
+			}
 			c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error (attempt %d): %v", tag, task.Name, attempt+1, err))
 			return err
 		}
@@ -184,6 +197,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 			}
 			if json.Unmarshal(respBody, &bizResp) == nil {
 				if bizResp.Code == "93420018" {
+					sawOrderLimit = true
 					c.logger.Info("order", fmt.Sprintf("%stask=[%s] max order limit reached, will retry", tag, task.Name))
 					continue
 				}
@@ -202,7 +216,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 
 	c.logger.Error("order", fmt.Sprintf("%stask=[%s] max retries exhausted, last status=%d body=%s",
 		tag, task.Name, lastStatusCode, string(lastRespBody)))
-	return fmt.Errorf("max retries (%d) exhausted on order limit error", maxRetries)
+	return fmt.Errorf("%w: max retries (%d) exhausted on order limit error", ErrOrderLimitReached, maxRetries)
 }
 
 func (c *Client) httpClientForTask(task config.TaskConfig) (tls_client.HttpClient, error) {

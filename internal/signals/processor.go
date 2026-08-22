@@ -2,6 +2,7 @@ package signals
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -89,7 +90,6 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	unit := strings.TrimSpace(sig.Unit)
 
 	if source == "upstream" && action == "test" {
-		p.logger.Info("signal", "上游心跳保活 (ping)")
 		return nil
 	}
 
@@ -235,7 +235,7 @@ func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.T
 		task := matched[i]
 		if p.tryClaimSlot(task.ID, task.Name) {
 			p.mu.Unlock()
-			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+			p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, matchedRange)
 			p.mu.Lock()
 			p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
 			return
@@ -254,7 +254,7 @@ func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []conf
 		if p.tryClaimSlot(task.ID, task.Name) {
 			p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s]", task.Name))
 			p.mu.Unlock()
-			p.executeTask(source, sig, task, action, amount, unit, matchedRange)
+			p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, matchedRange)
 			p.mu.Lock()
 			return
 		}
@@ -302,4 +302,76 @@ func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfi
 		Symbol:     sig.Symbol,
 		TickerType: sig.TickerType,
 	})
+}
+
+// executeTaskWithFallback is used by single-account dispatch modes (random and
+// round-robin). If the selected account exhausts retries with Binance error
+// 93420018 (open order limit), it automatically tries the other matched
+// executable accounts.
+func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary config.TaskConfig, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
+	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, primary.Name, action, sig.Symbol, amount, unit, matchedRange))
+
+	req := order.PlaceOrderRequest{
+		Amount:     amount,
+		Unit:       unit,
+		Action:     action,
+		Symbol:     sig.Symbol,
+		TickerType: sig.TickerType,
+	}
+
+	go func(t config.TaskConfig, r order.PlaceOrderRequest) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		err := p.order.PlaceOrder(ctx, t, r)
+		if err == nil {
+			return
+		}
+
+		if errors.Is(err, order.ErrOrderLimitReached) {
+			p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v, trying another executable account", t.Name, err))
+			p.tryFallbackOrder(source, sig, matched, t.ID, r)
+			return
+		}
+
+		p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v", t.Name, err))
+	}(primary, req)
+}
+
+// tryFallbackOrder attempts the remaining matched accounts in config order.
+// It only continues to another account if that account also hits the order
+// limit; other errors stop the fallback chain to avoid duplicate orders.
+func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID string, req order.PlaceOrderRequest) {
+	for _, task := range matched {
+		if task.ID == excludeID {
+			continue
+		}
+
+		p.mu.Lock()
+		ok := p.tryClaimSlot(task.ID, task.Name)
+		p.mu.Unlock()
+		if !ok {
+			continue
+		}
+
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, req.Amount, req.Unit))
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := p.order.PlaceOrder(ctx, task, req)
+		cancel()
+		if err == nil {
+			p.logger.Info("signal", fmt.Sprintf("dispatch fallback account=[%s] success", task.Name))
+			return
+		}
+
+		if errors.Is(err, order.ErrOrderLimitReached) {
+			p.logger.Error("signal", fmt.Sprintf("account=[%s] fallback order error: %v, continue to next account", task.Name, err))
+			continue
+		}
+
+		p.logger.Error("signal", fmt.Sprintf("account=[%s] fallback order error: %v", task.Name, err))
+		return
+	}
+
+	p.logger.Info("signal", "no available fallback account after order limit")
 }
