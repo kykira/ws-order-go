@@ -304,9 +304,15 @@ func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfi
 	})
 }
 
+// isFallbackError reports whether an order error should trigger switching to
+// another executable account.
+func isFallbackError(err error) bool {
+	return errors.Is(err, order.ErrOrderLimitReached) || errors.Is(err, order.ErrAccountUnavailable)
+}
+
 // executeTaskWithFallback is used by single-account dispatch modes (random and
-// round-robin). If the selected account exhausts retries with Binance error
-// 93420018 (open order limit), it automatically tries the other matched
+// round-robin). If the selected account is unavailable (order limit reached,
+// login expired, banned, etc.), it automatically tries the other matched
 // executable accounts.
 func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary config.TaskConfig, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
 	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, primary.Name, action, sig.Symbol, amount, unit, matchedRange))
@@ -328,7 +334,7 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 			return
 		}
 
-		if errors.Is(err, order.ErrOrderLimitReached) {
+		if isFallbackError(err) {
 			p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v, trying another executable account", t.Name, err))
 			p.tryFallbackOrder(source, sig, matched, t.ID, r)
 			return
@@ -339,8 +345,9 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 }
 
 // tryFallbackOrder attempts the remaining matched accounts in config order.
-// It only continues to another account if that account also hits the order
-// limit; other errors stop the fallback chain to avoid duplicate orders.
+// It only continues to another account if that account is also unavailable
+// (order limit, expired/banned); other errors stop the fallback chain to
+// avoid duplicate orders.
 func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID string, req order.PlaceOrderRequest) {
 	for _, task := range matched {
 		if task.ID == excludeID {
@@ -364,7 +371,7 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 			return
 		}
 
-		if errors.Is(err, order.ErrOrderLimitReached) {
+		if isFallbackError(err) {
 			p.logger.Error("signal", fmt.Sprintf("account=[%s] fallback order error: %v, continue to next account", task.Name, err))
 			continue
 		}

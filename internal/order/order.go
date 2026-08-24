@@ -23,6 +23,10 @@ import (
 // local retries were exhausted.
 var ErrOrderLimitReached = errors.New("order limit reached after retries")
 
+// ErrAccountUnavailable indicates the account itself is no longer usable,
+// e.g. login status expired (100002001) or banned (93420004).
+var ErrAccountUnavailable = errors.New("account unavailable or expired")
+
 type Client struct {
 	logger      *logs.Logger
 	clientsMu   sync.RWMutex
@@ -51,6 +55,10 @@ func (c *Client) ClearCache() {
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
 	c.httpClients = make(map[string]tls_client.HttpClient)
+}
+
+func isAccountUnavailableCode(code string) bool {
+	return code == "100002001" || code == "93420004"
 }
 
 func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req PlaceOrderRequest) error {
@@ -204,11 +212,24 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 				if bizResp.Code == "000000" || bizResp.Success {
 					return nil
 				}
+				if isAccountUnavailableCode(bizResp.Code) {
+					c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s (account unavailable/expired)", tag, task.Name, bizResp.Code))
+					return fmt.Errorf("%w: binance error code=%s", ErrAccountUnavailable, bizResp.Code)
+				}
 				// Other business error — don't retry
 				c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s", tag, task.Name, bizResp.Code))
 				return fmt.Errorf("binance error code=%s", bizResp.Code)
 			}
 			return nil
+		}
+
+		var bizResp struct {
+			Code    string `json:"code"`
+			Success bool   `json:"success"`
+		}
+		if json.Unmarshal(respBody, &bizResp) == nil && isAccountUnavailableCode(bizResp.Code) {
+			c.logger.Error("order", fmt.Sprintf("%stask=[%s] account unavailable/expired status=%d code=%s", tag, task.Name, resp.StatusCode, bizResp.Code))
+			return fmt.Errorf("%w: status=%d binance error code=%s", ErrAccountUnavailable, resp.StatusCode, bizResp.Code)
 		}
 
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
