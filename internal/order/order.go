@@ -161,8 +161,8 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		return err
 	}
 
-	// Retry up to 5 times on "Open order number has reached maximum limit" (93420018)
-	maxRetries := 5
+	// Retry once on "Open order number has reached maximum limit" (93420018)
+	maxRetries := 2
 	sawOrderLimit := false
 	var lastRespBody []byte
 	var lastStatusCode int
