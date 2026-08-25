@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -31,6 +32,7 @@ type WSServerConfig struct {
 type TaskConfig struct {
 	ID             string      `json:"id"`
 	Name           string      `json:"name"`
+	Group          string      `json:"group,omitempty"` // 同一 token/账号的任务填相同 group，共享 slot 配额
 	Enabled        bool        `json:"enabled"`
 	SkipSignals    int         `json:"skipSignals"`
 	TimeRanges     []TimeRange `json:"timeRanges,omitempty"`
@@ -44,6 +46,16 @@ type TaskConfig struct {
 	ValueBuy       string      `json:"valueBuy"`
 	ValueSell      string      `json:"valueSell"`
 	MinProba       float64     `json:"minProba"` // 0=不校验，非0=proba低于此值的信号跳过该账号
+}
+
+// SlotGroupKey returns the key used for shared rate-limit slots.
+// Tasks with the same explicit Group share the same slot pool; otherwise each
+// task keeps its own pool for backward compatibility.
+func (t TaskConfig) SlotGroupKey() string {
+	if g := strings.TrimSpace(t.Group); g != "" {
+		return "group:" + g
+	}
+	return "task:" + t.ID
 }
 
 type Config struct {
@@ -62,7 +74,7 @@ type Manager struct {
 
 func DefaultConfig() Config {
 	return Config{
-		Server: ServerConfig{Port: 9946},
+		Server:    ServerConfig{Port: 9946},
 		Upstreams: []UpstreamConfig{},
 		WSServer: WSServerConfig{
 			Enabled:   true,

@@ -222,10 +222,11 @@ func TestDispatchRoundRobinSlotExpiry(t *testing.T) {
 
 	// Manually age the first slot to 31 minutes ago, then expire it
 	proc.mu.Lock()
-	slots := proc.orderSlots["a1"]
+	slotKey := cfg.Tasks[0].SlotGroupKey()
+	slots := proc.orderSlots[slotKey]
 	if len(slots) > 0 {
 		slots[0] = time.Now().Add(-31 * time.Minute)
-		proc.orderSlots["a1"] = slots
+		proc.orderSlots[slotKey] = slots
 	}
 	proc.mu.Unlock()
 	proc.expireSlots()
@@ -243,6 +244,45 @@ func TestDispatchRoundRobinSlotExpiry(t *testing.T) {
 	}
 	if count < 6 {
 		t.Errorf("expected 6 orders after slot expiry (5 + 1), got %d", count)
+	}
+}
+
+func TestSlotGroupSharedAcrossTasks(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := dir + "/config.json"
+
+	cfg := config.Config{
+		Server:   config.ServerConfig{Port: 0},
+		Dispatch: "round-robin",
+		Tasks: []config.TaskConfig{
+			{ID: "a1", Name: "A1", Enabled: true, Group: "same", APIUrl: "http://a", Method: "GET"},
+			{ID: "a2", Name: "A2", Enabled: true, Group: "same", APIUrl: "http://b", Method: "GET"},
+		},
+	}
+	mgr, err := config.LoadManager(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = mgr.Update(func(c *config.Config) { *c = cfg })
+
+	logger := logs.NewLogger(100)
+	orderClient := order.NewClient(logger)
+	proc := NewProcessor(mgr, logger, orderClient)
+
+	sig := Signal{Action: "buy", Symbol: "BTCUSDT"}
+	for i := 0; i < 6; i++ {
+		sig.OrderID = int64(i)
+		_ = proc.Handle("test", sig, false)
+	}
+
+	count := 0
+	for _, e := range logger.Entries() {
+		if e.Source == "signal" && contains(e.Message, "source=test") {
+			count++
+		}
+	}
+	if count != 5 {
+		t.Errorf("expected 5 executed signals with shared group of 5 slots, got %d", count)
 	}
 }
 

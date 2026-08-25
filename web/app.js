@@ -135,7 +135,7 @@ function normalizeTasks(c) {
 function n(t) {
   t = t || {};
   return { id: String(t.id||"").trim()||rid("acct"), name: String(t.name||"").trim()||"Account", enabled: t.enabled!==false,
-    timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
+    group: String(t.group||"").trim(), timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
     expiresAt: +t.expiresAt||0, httpProxyUrl: String(t.httpProxyUrl||""), apiUrl: String(t.apiUrl||""),
     method: String(t.method||"POST").toUpperCase(), headers: String(t.headers||""), body: String(t.body||""),
     valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||""),
@@ -218,6 +218,7 @@ function card(t, idx) {
         <button class="border rounded px-2 py-0.5 text-[10px] bg-white hover:bg-gray-50 mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
       </div>
       <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Symbol过滤</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT" /></div>
+      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Token组</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="group" value="${esc(t.group)}" placeholder="同一token填相同组" /></div>
     </div>
 
     <!-- Collapsible: Headers & Body -->
@@ -261,8 +262,8 @@ function collectTasks() {
     const id=card.getAttribute("data-task-id")||rid("acct");
     const g=f=>{const e=card.querySelector(`[data-field="${f}"]`);return e?e.value:""};
     const gc=f=>{const e=card.querySelector(`[data-field="${f}"]`);return !!(e&&e.checked)};
-    return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"), 
-      timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
+    return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"),
+      group: String(g("group")||"").trim(), timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
       httpProxyUrl: String(g("httpProxyUrl")||"").trim(), apiUrl: String(g("apiUrl")||"").trim(),
       method: String(g("method")||"POST").trim().toUpperCase(), headers: String(g("headers")||""), body: String(g("body")||""),
       valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim(),

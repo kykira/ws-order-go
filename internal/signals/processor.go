@@ -36,7 +36,7 @@ type Processor struct {
 	mu            sync.Mutex
 	seenSkip      map[string]int
 	skipStartTime map[string]time.Time
-	orderSlots    map[string][]time.Time // taskID → 开仓时间列表，每个独立30min TTL
+	orderSlots    map[string][]time.Time // slotGroupKey → 开仓时间列表，每个独立30min TTL
 	stopCh        chan struct{}
 }
 
@@ -74,7 +74,7 @@ func (p *Processor) slotExpiryLoop() {
 }
 
 const maxOrdersPerWindow = 5
-const orderSlotTTL = 29 * time.Minute
+const orderSlotTTL = 29*time.Minute + 30*time.Second
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
@@ -174,7 +174,7 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	default: // "all" or empty
 		p.mu.Lock()
 		for _, task := range matched {
-			if p.tryClaimSlot(task.ID, task.Name) {
+			if p.tryClaimSlot(task.SlotGroupKey(), task.Name) {
 				p.mu.Unlock()
 				p.executeTask(source, sig, task, action, amount, unit, matchedRange)
 				p.mu.Lock()
@@ -192,7 +192,7 @@ func (p *Processor) expireSlots() {
 	defer p.mu.Unlock()
 
 	now := time.Now()
-	for taskID, slots := range p.orderSlots {
+	for slotKey, slots := range p.orderSlots {
 		cutoff := now.Add(-orderSlotTTL)
 		alive := make([]time.Time, 0, len(slots))
 		expired := 0
@@ -204,24 +204,24 @@ func (p *Processor) expireSlots() {
 			}
 		}
 		if expired > 0 {
-			p.orderSlots[taskID] = alive
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] expire -%d slots (30m TTL) %d→%d", taskID, expired, len(slots), len(alive)))
+			p.orderSlots[slotKey] = alive
+			p.logger.Info("signal", fmt.Sprintf("slotGroup=[%s] expire -%d slots (29m30s TTL) %d→%d", slotKey, expired, len(slots), len(alive)))
 		}
 	}
 }
 
-// tryClaimSlot tries to claim one slot. Returns true if claimed, false if full.
-// Must be called with p.mu held.
-func (p *Processor) tryClaimSlot(taskID, taskName string) bool {
-	slots := p.orderSlots[taskID]
+// tryClaimSlot tries to claim one slot for a slot group. Returns true if
+// claimed, false if full. Must be called with p.mu held.
+func (p *Processor) tryClaimSlot(slotKey, taskName string) bool {
+	slots := p.orderSlots[slotKey]
 	if len(slots) >= maxOrdersPerWindow {
-		p.logger.Info("signal", fmt.Sprintf("account=[%s] slots full %d/%d, skipping", taskName, len(slots), maxOrdersPerWindow))
+		p.logger.Info("signal", fmt.Sprintf("account=[%s] slotGroup=[%s] slots full %d/%d, skipping", taskName, slotKey, len(slots), maxOrdersPerWindow))
 		return false
 	}
 
 	now := time.Now()
-	p.orderSlots[taskID] = append(slots, now)
-	p.logger.Info("signal", fmt.Sprintf("account=[%s] slot %d/%d", taskName, len(p.orderSlots[taskID]), maxOrdersPerWindow))
+	p.orderSlots[slotKey] = append(slots, now)
+	p.logger.Info("signal", fmt.Sprintf("account=[%s] slotGroup=[%s] slot %d/%d", taskName, slotKey, len(p.orderSlots[slotKey]), maxOrdersPerWindow))
 	return true
 }
 
@@ -233,7 +233,7 @@ func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.T
 	perm := rand.Perm(len(matched))
 	for _, i := range perm {
 		task := matched[i]
-		if p.tryClaimSlot(task.ID, task.Name) {
+		if p.tryClaimSlot(task.SlotGroupKey(), task.Name) {
 			p.mu.Unlock()
 			p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, matchedRange)
 			p.mu.Lock()
@@ -251,7 +251,7 @@ func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []conf
 	defer p.mu.Unlock()
 
 	for _, task := range matched {
-		if p.tryClaimSlot(task.ID, task.Name) {
+		if p.tryClaimSlot(task.SlotGroupKey(), task.Name) {
 			p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s]", task.Name))
 			p.mu.Unlock()
 			p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, matchedRange)
@@ -336,7 +336,7 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 
 		if isFallbackError(err) {
 			p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v, trying another executable account", t.Name, err))
-			p.tryFallbackOrder(source, sig, matched, t.ID, r)
+			p.tryFallbackOrder(source, sig, matched, t.ID, t.SlotGroupKey(), r)
 			return
 		}
 
@@ -345,23 +345,25 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 }
 
 // tryFallbackOrder attempts the remaining matched accounts in config order.
-// It only continues to another account if that account is also unavailable
-// (order limit, expired/banned); other errors stop the fallback chain to
-// avoid duplicate orders.
-func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID string, req order.PlaceOrderRequest) {
+// It only tries one account per slot group, because accounts in the same group
+// share the same token/account slot pool and would hit the same limit.
+// Fallback is allowed to bypass the normal slot limit: once the primary
+// account fails, we prefer to try another executable account even if its slot
+// group is currently full.
+func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID, excludeGroupKey string, req order.PlaceOrderRequest) {
+	attemptedGroups := map[string]bool{excludeGroupKey: true}
 	for _, task := range matched {
 		if task.ID == excludeID {
 			continue
 		}
-
-		p.mu.Lock()
-		ok := p.tryClaimSlot(task.ID, task.Name)
-		p.mu.Unlock()
-		if !ok {
+		groupKey := task.SlotGroupKey()
+		if attemptedGroups[groupKey] {
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] skip fallback already attempted slotGroup=[%s]", task.Name, groupKey))
 			continue
 		}
+		attemptedGroups[groupKey] = true
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, req.Amount, req.Unit))
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit (bypass slot limit) symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, req.Amount, req.Unit))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err := p.order.PlaceOrder(ctx, task, req)
