@@ -96,6 +96,17 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 	}
 
+	// Legacy mode: upstream signals may not carry strategy/amount. Fall back to
+	// the amount configured in the strategy-group binding for this account.
+	if strings.TrimSpace(amount) == "" && sig.Strategy == "" {
+		for _, task := range matched {
+			if amt := p.amountForTask(cfg, task.ID); amt != "" {
+				amount = amt
+				break
+			}
+		}
+	}
+
 	switch cfg.Dispatch {
 	case "random":
 		p.dispatchRandom(source, sig, matched, action, amount, unit, matchedRange)
@@ -174,6 +185,20 @@ func (p *Processor) taskMatches(sig Signal, action string, task config.TaskConfi
 		return false, rangeDesc
 	}
 
+	if strings.TrimSpace(task.AllowedSymbols) != "" {
+		allowed := false
+		for _, s := range strings.Split(task.AllowedSymbols, ",") {
+			if strings.TrimSpace(s) != "" && strings.EqualFold(strings.TrimSpace(s), sig.Symbol) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			p.logger.Info("signal", fmt.Sprintf("account=[%s] skipped (symbol %s not in allowed list)", task.Name, sig.Symbol))
+			return false, rangeDesc
+		}
+	}
+
 	if applySkip && task.SkipSignals > 0 {
 		if !p.checkSkip(task) {
 			return false, rangeDesc
@@ -181,6 +206,19 @@ func (p *Processor) taskMatches(sig Signal, action string, task config.TaskConfi
 	}
 
 	return true, rangeDesc
+}
+
+func (p *Processor) amountForTask(cfg config.Config, accountID string) string {
+	for _, st := range cfg.Strategies {
+		for _, g := range st.Groups {
+			for _, a := range g.Accounts {
+				if a.AccountID == accountID {
+					return strings.TrimSpace(a.Amount)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (p *Processor) accountByID(tasks []config.TaskConfig, id string) (config.TaskConfig, bool) {

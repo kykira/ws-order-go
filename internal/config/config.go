@@ -30,21 +30,22 @@ type WSServerConfig struct {
 }
 
 type TaskConfig struct {
-	ID          string                       `json:"id"`
-	Name        string                       `json:"name"`
-	Type        string                       `json:"type,omitempty"`    // binance | hibt | turboflow | raw
-	Auth        map[string]string            `json:"auth,omitempty"`    // 平台 token 字段，例如 csrftoken/cookie/token/account_id
-	Symbols     map[string]map[string]string `json:"symbols,omitempty"` // 平台 symbol 映射，如 turboflow: BTCUSDT -> {pair_id, coin_code}
-	Enabled     bool                         `json:"enabled"`
-	SkipSignals int                          `json:"skipSignals"`
-	TimeRanges  []TimeRange                  `json:"timeRanges,omitempty"`
-	ExpiresAt   int64                        `json:"expiresAt"`         // Unix timestamp (seconds) for cookie/token expiration
-	APIUrl      string                       `json:"apiUrl,omitempty"`  // raw 自定义请求 URL
-	Method      string                       `json:"method,omitempty"`  // raw 自定义 Method
-	Headers     string                       `json:"headers,omitempty"` // raw 自定义 Headers
-	Body        string                       `json:"body,omitempty"`    // raw 自定义 Body
-	ValueBuy    string                       `json:"valueBuy"`
-	ValueSell   string                       `json:"valueSell"`
+	ID             string                       `json:"id"`
+	Name           string                       `json:"name"`
+	Type           string                       `json:"type,omitempty"`    // binance | hibt | turboflow | raw
+	Auth           map[string]string            `json:"auth,omitempty"`    // 平台 token 字段，例如 csrftoken/cookie/token/account_id
+	Symbols        map[string]map[string]string `json:"symbols,omitempty"` // 平台 symbol 映射，如 turboflow: BTCUSDT -> {pair_id, coin_code}
+	Enabled        bool                         `json:"enabled"`
+	AllowedSymbols string                       `json:"allowedSymbols,omitempty"` // 兼容旧信号：留空表示全部 symbol
+	SkipSignals    int                          `json:"skipSignals"`
+	TimeRanges     []TimeRange                  `json:"timeRanges,omitempty"`
+	ExpiresAt      int64                        `json:"expiresAt"`         // Unix timestamp (seconds) for cookie/token expiration
+	APIUrl         string                       `json:"apiUrl,omitempty"`  // raw 自定义请求 URL
+	Method         string                       `json:"method,omitempty"`  // raw 自定义 Method
+	Headers        string                       `json:"headers,omitempty"` // raw 自定义 Headers
+	Body           string                       `json:"body,omitempty"`    // raw 自定义 Body
+	ValueBuy       string                       `json:"valueBuy"`
+	ValueSell      string                       `json:"valueSell"`
 }
 
 // normalizeAuth keeps only the platform-relevant token fields for each
