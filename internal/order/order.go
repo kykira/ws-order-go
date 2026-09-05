@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -190,7 +191,7 @@ func defaultHeadersForType(task config.TaskConfig) string {
 		return strings.TrimSpace(fmt.Sprintf("accept: application/json, text/plain, */*\nauthorization: %s\nUser-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36\nbiz-pf: %s\ncontent-type: application/json\nlang: zh-cn\nuid: %s\norigin: https://www.turboflow.xyz\nreferer: https://www.turboflow.xyz/",
 			task.Auth["authorization"], task.Auth["biz-pf"], task.Auth["uid"]))
 	case "hibt":
-		return strings.TrimSpace(fmt.Sprintf("accept: application/json, text/plain, */*\nclient-type: web\ncontent-type: application/x-www-form-urlencoded\nhc-language: zh_CN\nhc-platform: web\nlang: zh_CN\norigin: https://hibt.com\nplatform: PC\nreferer: https://hibt.com/\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36\nauthorization: %s\nx-auth-token: %s",
+		return strings.TrimSpace(fmt.Sprintf("accept: application/json, text/plain, */*\nclient-type: web\ncontent-type: application/x-www-form-urlencoded\nfuture_source: 1\nhc-language: zh_CN\nhc-platform: web\nlang: zh_CN\norigin: https://hibt.com\nplatform: PC\nreferer: https://hibt.com/\nuser-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36\nauthorization: %s\nx-auth-token: %s",
 			task.Auth["authorization"], task.Auth["x-auth-token"]))
 	case "binance":
 		return strings.TrimSpace(fmt.Sprintf("content-type: application/json\nclienttype: web\ncsrftoken: %s\nCookie: p20t=%s",
@@ -281,7 +282,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	urlStr = strings.ReplaceAll(urlStr, "{{action}}", actVal)
 	urlStr = strings.ReplaceAll(urlStr, "{{symbol}}", req.Symbol)
 	urlStr = strings.ReplaceAll(urlStr, "{{hibt_symbol}}", hibtSym)
-	urlStr = strings.ReplaceAll(urlStr, "{{v}}", v)
+	urlStr = strings.ReplaceAll(urlStr, "{{v}}", url.QueryEscape(v))
 	urlStr = strings.ReplaceAll(urlStr, "{{tickerType}}", req.TickerType)
 	// Alias for backward compatibility
 	urlStr = strings.ReplaceAll(urlStr, "{{direction}}", actVal)

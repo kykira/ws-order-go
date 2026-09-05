@@ -8,14 +8,14 @@
       "name": "eth",
       "wsUrl": "wss://sub.kyssr.xyz/api/ws/connect",
       "wsKey": "ky",
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "up-m7isbc",
-      "name": "btc",
+      "name": "btc+eth30m",
       "wsUrl": "wss://sub.kyssr.xyz/ws/engine",
       "wsKey": "",
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "up-2e3s3c",
@@ -69,29 +69,15 @@
       "type": "hibt",
       "auth": {
         "authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJIT1RTLUNPSU4tSldUIiwiYXVkIjoibWVtYmVyIiwibmJmIjoxNzg3ODkyNDc5LCJpc3MiOiJBenVyZSIsImJvZHkiOnsidUlkIjoiMjA2OTMxMjQ3MDAwMTYxOSIsImZVSWQiOjM1MjMxNywicm9sZXMiOjEsImlwIjoiZWFmNTUwNmE1ODE1OTMzNmM1NGMxNzA1ZDczYTBmYWQiLCJBUElfTUVNQkVSIjoie1wiY2hhbm5lbElkXCI6MCxcImlkXCI6MzQyMzE3LFwibWVtYmVyTGV2ZWxcIjpcIkdFTkVSQUxcIixcIm1lcmNoYW50VHlwZVwiOjAsXCJwYXJ0bmVyVHlwZVwiOjIsXCJwcm9tb3Rpb25Db2RlXCI6XCJRSFRIXCIsXCJyZWdpc3RlclRpbWVcIjoxNzg3ODkyNDc5NDk5LFwic3RhdHVzXCI6XCJOT1JNQUxcIixcInVJZFwiOjIwNjkzMTI0NzAwMDE2MTl9IiwicGxhdGZvcm0iOiJQQyJ9LCJpYXQiOjE3ODc4OTI0NzksImp0aSI6IjVjYjU3MmNmNGYxMDRiNDE4YWFjYWY2MjdkNjE5ZGFiIn0.FoQxT_HEDHwNAlGKASGvRalWTN0m-Buga7e-etXx40Q",
+        "v": "2PBTEQRJf2yREedv4mGSR0Xq0ouSB2+P/y6X2s56FYQ=",
         "x-auth-token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJIT1RTLUNPSU4tSldUIiwiYXVkIjoibWVtYmVyIiwibmJmIjoxNzg3ODkyNDc5LCJpc3MiOiJBenVyZSIsImJvZHkiOnsidUlkIjoiMjA2OTMxMjQ3MDAwMTYxOSIsImZVSWQiOjM1MjMxNywicm9sZXMiOjEsImlwIjoiZWFmNTUwNmE1ODE1OTMzNmM1NGMxNzA1ZDczYTBmYWQiLCJBUElfTUVNQkVSIjoie1wiY2hhbm5lbElkXCI6MCxcImlkXCI6MzQyMzE3LFwibWVtYmVyTGV2ZWxcIjpcIkdFTkVSQUxcIixcIm1lcmNoYW50VHlwZVwiOjAsXCJwYXJ0bmVyVHlwZVwiOjIsXCJwcm9tb3Rpb25Db2RlXCI6XCJRSFRIXCIsXCJyZWdpc3RlclRpbWVcIjoxNzg3ODkyNDc5NDk5LFwic3RhdHVzXCI6XCJOT1JNQUxcIixcInVJZFwiOjIwNjkzMTI0NzAwMDE2MTl9IiwicGxhdGZvcm0iOiJQQyJ9LCJpYXQiOjE3ODc4OTI0NzksImp0aSI6IjVjYjU3MmNmNGYxMDRiNDE4YWFjYWY2MjdkNjE5ZGFiIn0.FoQxT_HEDHwNAlGKASGvRalWTN0m-Buga7e-etXx40Q"
       },
-      "enabled": false,
+      "enabled": true,
       "skipSignals": 0,
       "expiresAt": 0,
       "method": "POST",
       "valueBuy": "1",
-      "valueSell": "2"
-    },
-    {
-      "id": "acct-yjcki2",
-      "name": "New Account",
-      "type": "binance",
-      "auth": {
-        "csrftoken": "eed08b5b922ce9b23f6d90aad4ee7935",
-        "p20t": "web.1272166681.535F37B41973C6C92CD50EF61BFF36EB"
-      },
-      "enabled": false,
-      "skipSignals": 0,
-      "expiresAt": 0,
-      "method": "POST",
-      "valueBuy": "LONG",
-      "valueSell": "SHORT"
+      "valueSell": "-1"
     },
     {
       "id": "dq-btc",
@@ -111,7 +97,7 @@
       "id": "dq-eth",
       "name": "DoraQuant-ETH",
       "type": "raw",
-      "enabled": true,
+      "enabled": false,
       "skipSignals": 0,
       "expiresAt": 0,
       "apiUrl": "https://doraquant.xyz/webhook",
@@ -162,22 +148,53 @@
           "id": "grp-turboflow",
           "name": "TurboFlow组",
           "enabled": true,
-          "dispatch": "random",
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            },
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "15"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "btc-30m-v3",
+      "name": "btc-30m-v3",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-vg489y",
+          "name": "TurboFlow组",
+          "enabled": true,
+          "dispatch": "all",
           "accounts": [
             {
               "accountId": "tf-pair6",
               "amount": "2"
             }
           ]
-        },
+        }
+      ]
+    },
+    {
+      "id": "eth-30m-v1",
+      "name": "eth-30m-v1",
+      "enabled": true,
+      "groups": [
         {
-          "id": "grp-dq",
-          "name": "DoraQuant组",
+          "id": "grp-hw4qfo",
+          "name": "v1组",
           "enabled": true,
           "dispatch": "all",
           "accounts": [
             {
-              "accountId": "dq-eth"
+              "accountId": "tf-pair6",
+              "amount": "2"
             }
           ]
         }

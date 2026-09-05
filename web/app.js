@@ -158,7 +158,7 @@ function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:
 
 function platformDefaults(type) {
   if (type === "turboflow") return { valueBuy: "1", valueSell: "3" };
-  if (type === "hibt") return { valueBuy: "1", valueSell: "2" };
+  if (type === "hibt") return { valueBuy: "1", valueSell: "-1" };
   if (type === "raw") return { valueBuy: "buy", valueSell: "sell" };
   return { valueBuy: "LONG", valueSell: "SHORT" };
 }
