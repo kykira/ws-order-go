@@ -27,8 +27,9 @@ type Conn struct {
 	conn      *websocket.Conn
 	connected bool
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	running bool
 }
 
 // Manager 管理所有上游 WS 连接
@@ -93,10 +94,10 @@ func (m *Manager) Sync() {
 				existing.Start(m.logger, m.processor)
 			}
 
-			// 根据 enabled 状态启停
-			if u.Enabled && !existing.IsConnected() {
+			// 根据 enabled 状态启停；用 IsRunning 防止 dial 过程中重复 Start 造成双连接
+			if u.Enabled && !existing.IsRunning() {
 				existing.Start(m.logger, m.processor)
-			} else if !u.Enabled && existing.IsConnected() {
+			} else if !u.Enabled && existing.IsRunning() {
 				existing.Stop()
 			}
 		} else {
@@ -171,36 +172,47 @@ func (c *Conn) IsConnected() bool {
 	return c.connected
 }
 
+func (c *Conn) IsRunning() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.running
+}
+
 func (c *Conn) Start(logger *logs.Logger, processor *signals.Processor) {
+	c.mu.Lock()
+	if c.running {
+		c.mu.Unlock()
+		return
+	}
 	if c.cancel != nil {
 		c.cancel()
 	}
 	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.running = true
+	c.mu.Unlock()
 	go c.loop(logger, processor)
 }
 
 func (c *Conn) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.cancel != nil {
 		c.cancel()
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.conn != nil {
 		_ = c.conn.Close()
 		c.conn = nil
 	}
 	c.connected = false
-}
-
-func (c *Conn) ForceDisconnect() {
-	c.Stop()
+	c.running = false
 }
 
 func (c *Conn) loop(logger *logs.Logger, processor *signals.Processor) {
+	ctx := c.ctx
 	backoff := 2 * time.Second
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			logger.Info("wsclient", fmt.Sprintf("upstream [%s] %s stopped", c.ID, c.Name))
 			return
 		default:

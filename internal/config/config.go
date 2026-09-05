@@ -30,40 +30,96 @@ type WSServerConfig struct {
 }
 
 type TaskConfig struct {
-	ID             string      `json:"id"`
-	Name           string      `json:"name"`
-	Group          string      `json:"group,omitempty"` // 同一 token/账号的任务填相同 group，共享 slot 配额
-	Enabled        bool        `json:"enabled"`
-	SkipSignals    int         `json:"skipSignals"`
-	TimeRanges     []TimeRange `json:"timeRanges,omitempty"`
-	AllowedSymbols string      `json:"allowedSymbols"` // e.g. "BTCUSDT,ETHUSDT" or empty for all
-	ExpiresAt      int64       `json:"expiresAt"`      // Unix timestamp (seconds) for cookie/token expiration
-	HTTPProxyURL   string      `json:"httpProxyUrl"`
-	APIUrl         string      `json:"apiUrl"`
-	Method         string      `json:"method"`
-	Headers        string      `json:"headers"`
-	Body           string      `json:"body"`
-	ValueBuy       string      `json:"valueBuy"`
-	ValueSell      string      `json:"valueSell"`
-	MinProba       float64     `json:"minProba"` // 0=不校验，非0=proba低于此值的信号跳过该账号
+	ID          string                       `json:"id"`
+	Name        string                       `json:"name"`
+	Type        string                       `json:"type,omitempty"`    // binance | hibt | turboflow | raw
+	Auth        map[string]string            `json:"auth,omitempty"`    // 平台 token 字段，例如 csrftoken/cookie/token/account_id
+	Symbols     map[string]map[string]string `json:"symbols,omitempty"` // 平台 symbol 映射，如 turboflow: BTCUSDT -> {pair_id, coin_code}
+	Enabled     bool                         `json:"enabled"`
+	SkipSignals int                          `json:"skipSignals"`
+	TimeRanges  []TimeRange                  `json:"timeRanges,omitempty"`
+	ExpiresAt   int64                        `json:"expiresAt"`         // Unix timestamp (seconds) for cookie/token expiration
+	APIUrl      string                       `json:"apiUrl,omitempty"`  // raw 自定义请求 URL
+	Method      string                       `json:"method,omitempty"`  // raw 自定义 Method
+	Headers     string                       `json:"headers,omitempty"` // raw 自定义 Headers
+	Body        string                       `json:"body,omitempty"`    // raw 自定义 Body
+	ValueBuy    string                       `json:"valueBuy"`
+	ValueSell   string                       `json:"valueSell"`
 }
 
-// SlotGroupKey returns the key used for shared rate-limit slots.
-// Tasks with the same explicit Group share the same slot pool; otherwise each
-// task keeps its own pool for backward compatibility.
-func (t TaskConfig) SlotGroupKey() string {
-	if g := strings.TrimSpace(t.Group); g != "" {
-		return "group:" + g
+// normalizeAuth keeps only the platform-relevant token fields for each
+// account type. Binance keeps csrftoken + p20t; other platforms keep all
+// fields for now.
+func normalizeAuth(accountType string, auth map[string]string) map[string]string {
+	if auth == nil {
+		auth = map[string]string{}
 	}
-	return "task:" + t.ID
+
+	switch accountType {
+	case "binance":
+		out := map[string]string{}
+		if v := strings.TrimSpace(auth["csrftoken"]); v != "" {
+			out["csrftoken"] = v
+		}
+		p20t := strings.TrimSpace(auth["p20t"])
+		if p20t == "" {
+			if cookie := auth["cookie"]; cookie != "" {
+				for _, part := range strings.Split(cookie, ";") {
+					part = strings.TrimSpace(part)
+					if strings.HasPrefix(part, "p20t=") {
+						p20t = strings.TrimPrefix(part, "p20t=")
+						break
+					}
+				}
+			}
+		}
+		if p20t != "" {
+			out["p20t"] = p20t
+		}
+		return out
+
+	case "hibt", "turboflow":
+		return auth
+
+	default:
+		return auth
+	}
+}
+
+// StrategyGroupAccountConfig binds one account to a strategy group with the
+// amount used for that account in this strategy.
+type StrategyGroupAccountConfig struct {
+	AccountID string `json:"accountId"`
+	Amount    string `json:"amount,omitempty"`
+}
+
+// StrategyGroupConfig is a group of account bindings inside one strategy.
+// Dispatch: random | round-robin | all.
+type StrategyGroupConfig struct {
+	ID         string                       `json:"id"`
+	Name       string                       `json:"name"`
+	Enabled    bool                         `json:"enabled"`
+	Dispatch   string                       `json:"dispatch"` // random | round-robin | all
+	Accounts   []StrategyGroupAccountConfig `json:"accounts"`
+	AccountIDs []string                     `json:"accountIds,omitempty"` // deprecated, kept for old configs
+}
+
+// StrategyConfig groups several account groups. A signal with matching
+// strategy name/id dispatches to every enabled group of the strategy.
+type StrategyConfig struct {
+	ID      string                `json:"id"`
+	Name    string                `json:"name"`
+	Enabled bool                  `json:"enabled"`
+	Groups  []StrategyGroupConfig `json:"groups"`
 }
 
 type Config struct {
-	Server    ServerConfig     `json:"server"`
-	Upstreams []UpstreamConfig `json:"upstreams"`
-	WSServer  WSServerConfig   `json:"wsServer"`
-	Dispatch  string           `json:"dispatch"`
-	Tasks     []TaskConfig     `json:"tasks"`
+	Server     ServerConfig     `json:"server"`
+	Upstreams  []UpstreamConfig `json:"upstreams"`
+	WSServer   WSServerConfig   `json:"wsServer"`
+	Dispatch   string           `json:"dispatch"`
+	Tasks      []TaskConfig     `json:"tasks"`
+	Strategies []StrategyConfig `json:"strategies,omitempty"`
 }
 
 type Manager struct {
@@ -85,15 +141,10 @@ func DefaultConfig() Config {
 		Dispatch: "round-robin",
 		Tasks: []TaskConfig{
 			{
-				ID:           "default",
-				Name:         "Default Task",
-				Enabled:      true,
-				SkipSignals:  0,
-				HTTPProxyURL: "",
-				APIUrl:       "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
-				Method:       "POST",
-				Headers:      "Content-Type: application/json\nclienttype: web",
-				Body:         "{\"orderAmount\":\"{{amount}}\",\"timeIncrements\":\"{{unit}}\",\"symbolName\":\"BTCUSDT\",\"payoutRatio\":\"0.80\",\"direction\":\"{{direction}}\"}",
+				ID:          "default",
+				Name:        "Default Task",
+				Enabled:     true,
+				SkipSignals: 0,
 			},
 		},
 	}

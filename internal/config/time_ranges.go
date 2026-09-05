@@ -34,10 +34,8 @@ func normalizeTask(task *TaskConfig, index int) {
 	if task.Name == "" {
 		task.Name = task.ID
 	}
-	if task.Method == "" {
-		task.Method = "POST"
-	}
 	task.TimeRanges = normalizeTimeRanges(task.TimeRanges)
+	task.Auth = normalizeAuth(task.Type, task.Auth)
 }
 
 func normalizeTimeRanges(ranges []TimeRange) []TimeRange {

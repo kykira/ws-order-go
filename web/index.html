@@ -62,7 +62,7 @@
         <option value="random">随机选一</option>
         <option value="all">全部执行</option>
       </select>
-      <span class="text-[10px] text-gray-400 hidden sm:inline">每30分钟恢复1槽位，上限5</span>
+      <span class="text-[10px] text-gray-400 hidden sm:inline">无槽位限制</span>
     </div>
     <div class="flex items-center gap-1.5">
       <button id="btn-import-json" class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50">导入</button>
@@ -97,8 +97,23 @@
     <div id="upstreams-container" class="upstream-body space-y-2"></div>
   </div>
 
+  <!-- Strategies -->
+  <div class="bg-white border rounded-lg p-3">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-xs font-semibold cursor-pointer select-none" onclick="this.parentElement.parentElement.querySelector('.strategy-body').classList.toggle('hidden')">▾ 策略与分组</h2>
+      <button id="btn-add-strategy" class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50">+ 策略</button>
+    </div>
+    <div id="strategies-container" class="strategy-body space-y-3"></div>
+  </div>
+
   <!-- Accounts -->
-  <div id="tasks-container" class="space-y-3"></div>
+  <div class="bg-white border rounded-lg p-3">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-xs font-semibold">账号库</h2>
+      <button id="btn-add-account" class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50">+ 账号</button>
+    </div>
+    <div id="tasks-container" class="space-y-3"></div>
+  </div>
 
   <!-- Logs -->
   <div class="bg-white border rounded-lg p-3">

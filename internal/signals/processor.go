@@ -26,6 +26,9 @@ type Signal struct {
 	Unit      string  `json:"unit,omitempty"`
 	Direction string  `json:"direction,omitempty"`
 	Proba     float64 `json:"proba,omitempty"` // 0=未传，>0=模型置信度
+
+	Strategy string `json:"strategy,omitempty"` // 策略 ID 或名称
+	Period   string `json:"period,omitempty"`   // 时间周期，如 30m
 }
 
 type Processor struct {
@@ -36,45 +39,20 @@ type Processor struct {
 	mu            sync.Mutex
 	seenSkip      map[string]int
 	skipStartTime map[string]time.Time
-	orderSlots    map[string][]time.Time // slotGroupKey → 开仓时间列表，每个独立30min TTL
-	stopCh        chan struct{}
 }
 
 func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client) *Processor {
-	p := &Processor{
+	return &Processor{
 		cfg:           cfg,
 		logger:        logger,
 		order:         orderClient,
 		seenSkip:      make(map[string]int),
 		skipStartTime: make(map[string]time.Time),
-		orderSlots:    make(map[string][]time.Time),
-		stopCh:        make(chan struct{}),
-	}
-	go p.slotExpiryLoop()
-	return p
-}
-
-// Stop shuts down the background expiry loop.
-func (p *Processor) Stop() {
-	close(p.stopCh)
-}
-
-// slotExpiryLoop ticks every minute to release expired slots.
-func (p *Processor) slotExpiryLoop() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-p.stopCh:
-			return
-		case <-ticker.C:
-			p.expireSlots()
-		}
 	}
 }
 
-const maxOrdersPerWindow = 5
-const orderSlotTTL = 29*time.Minute + 30*time.Second
+// Stop is kept for API compatibility. There is no background slot loop anymore.
+func (p *Processor) Stop() {}
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
@@ -98,64 +76,20 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 	}
 
-	// Collect matching accounts
+	if sig.Strategy != "" && len(cfg.Strategies) > 0 {
+		p.handleStrategySignal(source, sig, cfg, action, amount, unit, applySkip)
+		return nil
+	}
+
+	// Collect matching accounts (legacy flat-task mode)
 	var matched []config.TaskConfig
 	var matchedRange string
-
 	for _, task := range cfg.Tasks {
-		if !task.Enabled {
-			continue
+		allowed, rangeDesc := p.taskMatches(sig, action, task, applySkip)
+		if allowed {
+			matched = append(matched, task)
+			matchedRange = rangeDesc
 		}
-
-		currentTime := time.Now()
-		allowedNow, rangeDesc, err := config.IsTimeAllowed(task.TimeRanges, currentTime)
-		if err != nil {
-			p.logger.Error("signal", fmt.Sprintf("account=[%s] invalid time ranges: %v", task.Name, err))
-			continue
-		}
-		if !allowedNow {
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] ignored by time ranges current=%s ranges=%s", task.Name, currentTime.Format("15:04"), config.FormatTimeRanges(task.TimeRanges)))
-			continue
-		}
-		matchedRange = rangeDesc
-
-		if strings.TrimSpace(task.AllowedSymbols) != "" {
-			allowed := false
-			for _, s := range strings.Split(task.AllowedSymbols, ",") {
-				if strings.TrimSpace(s) != "" && strings.EqualFold(strings.TrimSpace(s), sig.Symbol) {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				p.logger.Info("signal", fmt.Sprintf("account=[%s] skipped (symbol %s not in allowed list)", task.Name, sig.Symbol))
-				continue
-			}
-		}
-
-		if applySkip && task.SkipSignals > 0 {
-			if !p.checkSkip(task) {
-				continue
-			}
-		}
-
-		// Proba filter
-		if sig.Proba > 0 && task.MinProba > 0 {
-			switch action {
-			case "buy":
-				if sig.Proba < task.MinProba {
-					p.logger.Info("signal", fmt.Sprintf("account=[%s] proba=%.4f < %.2f, skip buy", task.Name, sig.Proba, task.MinProba))
-					continue
-				}
-			case "sell":
-				if sig.Proba > (1 - task.MinProba) {
-					p.logger.Info("signal", fmt.Sprintf("account=[%s] proba=%.4f > %.2f, skip sell", task.Name, sig.Proba, 1-task.MinProba))
-					continue
-				}
-			}
-		}
-
-		matched = append(matched, task)
 	}
 
 	if len(matched) == 0 {
@@ -172,95 +106,34 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		return nil
 
 	default: // "all" or empty
-		p.mu.Lock()
 		for _, task := range matched {
-			if p.tryClaimSlot(task.SlotGroupKey(), task.Name) {
-				p.mu.Unlock()
-				p.executeTask(source, sig, task, action, amount, unit, matchedRange)
-				p.mu.Lock()
-			}
+			p.executeTask(source, sig, task, action, amount, unit, sig.Period, matchedRange)
 		}
-		p.mu.Unlock()
 	}
 
 	return nil
 }
 
-// expireSlots removes slots older than orderSlotTTL for all accounts.
-func (p *Processor) expireSlots() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	now := time.Now()
-	for slotKey, slots := range p.orderSlots {
-		cutoff := now.Add(-orderSlotTTL)
-		alive := make([]time.Time, 0, len(slots))
-		expired := 0
-		for _, t := range slots {
-			if t.Before(cutoff) {
-				expired++
-			} else {
-				alive = append(alive, t)
-			}
-		}
-		if expired > 0 {
-			p.orderSlots[slotKey] = alive
-			p.logger.Info("signal", fmt.Sprintf("slotGroup=[%s] expire -%d slots (29m30s TTL) %d→%d", slotKey, expired, len(slots), len(alive)))
-		}
-	}
-}
-
-// tryClaimSlot tries to claim one slot for a slot group. Returns true if
-// claimed, false if full. Must be called with p.mu held.
-func (p *Processor) tryClaimSlot(slotKey, taskName string) bool {
-	slots := p.orderSlots[slotKey]
-	if len(slots) >= maxOrdersPerWindow {
-		p.logger.Info("signal", fmt.Sprintf("account=[%s] slotGroup=[%s] slots full %d/%d, skipping", taskName, slotKey, len(slots), maxOrdersPerWindow))
-		return false
-	}
-
-	now := time.Now()
-	p.orderSlots[slotKey] = append(slots, now)
-	p.logger.Info("signal", fmt.Sprintf("account=[%s] slotGroup=[%s] slot %d/%d", taskName, slotKey, len(p.orderSlots[slotKey]), maxOrdersPerWindow))
-	return true
-}
-
-// dispatchRandom picks one matched account, respecting slot limits.
+// dispatchRandom picks one matched account randomly.
 func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	perm := rand.Perm(len(matched))
-	for _, i := range perm {
-		task := matched[i]
-		if p.tryClaimSlot(task.SlotGroupKey(), task.Name) {
-			p.mu.Unlock()
-			p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, matchedRange)
-			p.mu.Lock()
-			p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
-			return
-		}
+	if len(matched) == 0 {
+		return
 	}
-	p.logger.Info("signal", fmt.Sprintf("dispatch=random all %d accounts full, signal dropped", len(matched)))
+
+	task := matched[rand.Intn(len(matched))]
+	p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, sig.Period, matchedRange, nil)
+	p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
 }
 
-// dispatchRoundRobin walks matched accounts in config order, picks the first
-// one below the 5-slot limit.
+// dispatchRoundRobin picks the first matched account in config order.
 func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for _, task := range matched {
-		if p.tryClaimSlot(task.SlotGroupKey(), task.Name) {
-			p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s]", task.Name))
-			p.mu.Unlock()
-			p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, matchedRange)
-			p.mu.Lock()
-			return
-		}
+	if len(matched) == 0 {
+		return
 	}
 
-	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin all %d accounts full, signal dropped", len(matched)))
+	task := matched[0]
+	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s]", task.Name))
+	p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, sig.Period, matchedRange, nil)
 }
 
 func (p *Processor) checkSkip(task config.TaskConfig) bool {
@@ -285,8 +158,134 @@ func (p *Processor) checkSkip(task config.TaskConfig) bool {
 	return true
 }
 
-func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfig, action, amount, unit, matchedRange string) {
-	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, task.Name, action, sig.Symbol, amount, unit, matchedRange))
+func (p *Processor) taskMatches(sig Signal, action string, task config.TaskConfig, applySkip bool) (bool, string) {
+	if !task.Enabled {
+		return false, ""
+	}
+
+	currentTime := time.Now()
+	allowedNow, rangeDesc, err := config.IsTimeAllowed(task.TimeRanges, currentTime)
+	if err != nil {
+		p.logger.Error("signal", fmt.Sprintf("account=[%s] invalid time ranges: %v", task.Name, err))
+		return false, ""
+	}
+	if !allowedNow {
+		p.logger.Info("signal", fmt.Sprintf("account=[%s] ignored by time ranges current=%s ranges=%s", task.Name, currentTime.Format("15:04"), config.FormatTimeRanges(task.TimeRanges)))
+		return false, rangeDesc
+	}
+
+	if applySkip && task.SkipSignals > 0 {
+		if !p.checkSkip(task) {
+			return false, rangeDesc
+		}
+	}
+
+	return true, rangeDesc
+}
+
+func (p *Processor) accountByID(tasks []config.TaskConfig, id string) (config.TaskConfig, bool) {
+	for _, t := range tasks {
+		if t.ID == id {
+			return t, true
+		}
+	}
+	return config.TaskConfig{}, false
+}
+
+type groupAccountMatch struct {
+	task   config.TaskConfig
+	amount string
+}
+
+func (p *Processor) groupMatchedAccounts(sig Signal, action string, tasks []config.TaskConfig, group config.StrategyGroupConfig, applySkip bool) []groupAccountMatch {
+	var matched []groupAccountMatch
+
+	bindings := group.Accounts
+	if len(bindings) == 0 && len(group.AccountIDs) > 0 {
+		for _, id := range group.AccountIDs {
+			bindings = append(bindings, config.StrategyGroupAccountConfig{AccountID: id})
+		}
+	}
+
+	for _, binding := range bindings {
+		task, ok := p.accountByID(tasks, binding.AccountID)
+		if !ok {
+			p.logger.Info("signal", fmt.Sprintf("group=[%s] account id=[%s] not found, skip", group.Name, binding.AccountID))
+			continue
+		}
+		allowed, _ := p.taskMatches(sig, action, task, applySkip)
+		if allowed {
+			matched = append(matched, groupAccountMatch{task: task, amount: strings.TrimSpace(binding.Amount)})
+		}
+	}
+	return matched
+}
+
+func (p *Processor) handleStrategySignal(source string, sig Signal, cfg config.Config, action, amount, unit string, applySkip bool) {
+	for _, st := range cfg.Strategies {
+		if !st.Enabled {
+			continue
+		}
+		if st.ID != sig.Strategy && st.Name != sig.Strategy {
+			continue
+		}
+
+		for _, group := range st.Groups {
+			if !group.Enabled {
+				continue
+			}
+			p.dispatchGroup(source, sig, cfg.Tasks, group, action, amount, unit, sig.Period, applySkip)
+		}
+	}
+}
+
+func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.TaskConfig, group config.StrategyGroupConfig, action, signalAmount, unit, period string, applySkip bool) {
+	matched := p.groupMatchedAccounts(sig, action, tasks, group, applySkip)
+	if len(matched) == 0 {
+		p.logger.Info("signal", fmt.Sprintf("strategy=[%s] group=[%s] no matched account, skip", sig.Strategy, group.Name))
+		return
+	}
+
+	amountFor := func(t config.TaskConfig) string {
+		for _, m := range matched {
+			if m.task.ID == t.ID {
+				if strings.TrimSpace(m.amount) != "" {
+					return m.amount
+				}
+				if strings.TrimSpace(signalAmount) != "" {
+					return signalAmount
+				}
+				return ""
+			}
+		}
+		return signalAmount
+	}
+
+	matchedTasks := make([]config.TaskConfig, 0, len(matched))
+	for _, m := range matched {
+		matchedTasks = append(matchedTasks, m.task)
+	}
+
+	switch group.Dispatch {
+	case "all":
+		for _, m := range matched {
+			p.executeTask(source, sig, m.task, action, amountFor(m.task), unit, period, "")
+		}
+
+	case "round-robin":
+		m := matched[0]
+		p.logger.Info("signal", fmt.Sprintf("dispatch=group round-robin strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
+		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
+
+	default: // random
+		m := matched[rand.Intn(len(matched))]
+		p.logger.Info("signal", fmt.Sprintf("dispatch=group random strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
+		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
+	}
+}
+
+func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfig, action, amount, unit, period, matchedRange string) {
+	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, task.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
 	go func(t config.TaskConfig, req order.PlaceOrderRequest) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -301,21 +300,22 @@ func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfi
 		Action:     action,
 		Symbol:     sig.Symbol,
 		TickerType: sig.TickerType,
+		Period:     period,
 	})
 }
 
 // isFallbackError reports whether an order error should trigger switching to
 // another executable account.
 func isFallbackError(err error) bool {
-	return errors.Is(err, order.ErrOrderLimitReached) || errors.Is(err, order.ErrAccountUnavailable)
+	return errors.Is(err, order.ErrRetryExhausted) || errors.Is(err, order.ErrAccountUnavailable)
 }
 
 // executeTaskWithFallback is used by single-account dispatch modes (random and
 // round-robin). If the selected account is unavailable (order limit reached,
 // login expired, banned, etc.), it automatically tries the other matched
 // executable accounts.
-func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary config.TaskConfig, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
-	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s timeRange=%s", source, sig.OrderID, primary.Name, action, sig.Symbol, amount, unit, matchedRange))
+func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary config.TaskConfig, matched []config.TaskConfig, action, amount, unit, period, matchedRange string, amountFor func(config.TaskConfig) string) {
+	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, primary.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
 	req := order.PlaceOrderRequest{
 		Amount:     amount,
@@ -323,6 +323,7 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 		Action:     action,
 		Symbol:     sig.Symbol,
 		TickerType: sig.TickerType,
+		Period:     period,
 	}
 
 	go func(t config.TaskConfig, r order.PlaceOrderRequest) {
@@ -336,7 +337,7 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 
 		if isFallbackError(err) {
 			p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v, trying another executable account", t.Name, err))
-			p.tryFallbackOrder(source, sig, matched, t.ID, t.SlotGroupKey(), r)
+			p.tryFallbackOrder(source, sig, matched, t.ID, r, amountFor)
 			return
 		}
 
@@ -345,28 +346,23 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 }
 
 // tryFallbackOrder attempts the remaining matched accounts in config order.
-// It only tries one account per slot group, because accounts in the same group
-// share the same token/account slot pool and would hit the same limit.
-// Fallback is allowed to bypass the normal slot limit: once the primary
-// account fails, we prefer to try another executable account even if its slot
-// group is currently full.
-func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID, excludeGroupKey string, req order.PlaceOrderRequest) {
-	attemptedGroups := map[string]bool{excludeGroupKey: true}
+func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID string, req order.PlaceOrderRequest, amountFor func(config.TaskConfig) string) {
 	for _, task := range matched {
 		if task.ID == excludeID {
 			continue
 		}
-		groupKey := task.SlotGroupKey()
-		if attemptedGroups[groupKey] {
-			p.logger.Info("signal", fmt.Sprintf("account=[%s] skip fallback already attempted slotGroup=[%s]", task.Name, groupKey))
-			continue
-		}
-		attemptedGroups[groupKey] = true
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit (bypass slot limit) symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, req.Amount, req.Unit))
+		amt := req.Amount
+		if amountFor != nil {
+			amt = amountFor(task)
+		}
+		r := req
+		r.Amount = amt
+
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, amt, req.Unit))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		err := p.order.PlaceOrder(ctx, task, req)
+		err := p.order.PlaceOrder(ctx, task, r)
 		cancel()
 		if err == nil {
 			p.logger.Info("signal", fmt.Sprintf("dispatch fallback account=[%s] success", task.Name))

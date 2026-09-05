@@ -5,6 +5,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 let stateTasks = [];
 let stateUpstreams = [];
+let stateStrategies = [];
 
 // ── Auth ──
 
@@ -74,6 +75,8 @@ async function loadConfig() {
   const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
   stateTasks = normalizeTasks(c);
   renderTasks(stateTasks);
+  stateStrategies = normalizeStrategies(c);
+  renderStrategies(stateStrategies);
 }
 
 function initActions() {
@@ -91,10 +94,14 @@ function initActions() {
       if (!stateUpstreams.length) stateUpstreams = [{id:rid("up"),name:"",wsUrl:"",wsKey:"",enabled:false}];
       renderUpstreams(stateUpstreams);
       const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
-      stateTasks = normalizeTasks(c); renderTasks(stateTasks); log("JSON 已导入");
+      stateTasks = normalizeTasks(c); renderTasks(stateTasks);
+      stateStrategies = normalizeStrategies(c); renderStrategies(stateStrategies);
+      log("JSON 已导入");
     } catch(e) { alert("解析失败: "+e.message); }
   });
   $("btn-add-task")?.addEventListener("click", () => { stateTasks = collectTasks(); stateTasks.push(defaultTask()); renderTasks(stateTasks); });
+  $("btn-add-account")?.addEventListener("click", () => { stateTasks = collectTasks(); stateTasks.push(defaultTask()); renderTasks(stateTasks); });
+  $("btn-add-strategy")?.addEventListener("click", () => { stateStrategies = collectStrategies(); stateStrategies.push(defaultStrategy()); renderStrategies(stateStrategies); });
   $("btn-add-upstream")?.addEventListener("click", () => {
     stateUpstreams.push({ id:rid("up"), name:"", wsUrl:"", wsKey:"", enabled:false });
     renderUpstreams(stateUpstreams);
@@ -111,7 +118,9 @@ function collectPayload() {
   const upstreams = collectUpstreams();
   const tasks = collectTasks().map(n);
   validate(tasks); stateTasks = tasks;
-  return { upstreams, wsServer, dispatch, tasks };
+  const strategies = collectStrategies();
+  stateStrategies = strategies;
+  return { upstreams, wsServer, dispatch, tasks, strategies };
 }
 
 function collectUpstreams() {
@@ -134,15 +143,45 @@ function normalizeTasks(c) {
 
 function n(t) {
   t = t || {};
+  const auth = t.auth && typeof t.auth === "object" ? t.auth : {};
   return { id: String(t.id||"").trim()||rid("acct"), name: String(t.name||"").trim()||"Account", enabled: t.enabled!==false,
-    group: String(t.group||"").trim(), timeRanges: ctr(t.timeRanges), allowedSymbols: String(t.allowedSymbols||""),
-    expiresAt: +t.expiresAt||0, httpProxyUrl: String(t.httpProxyUrl||""), apiUrl: String(t.apiUrl||""),
-    method: String(t.method||"POST").toUpperCase(), headers: String(t.headers||""), body: String(t.body||""),
-    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||""),
-    minProba: parseFloat(t.minProba)||0 };
+    type: String(t.type||"binance").trim(), auth,
+    symbols: t.symbols && typeof t.symbols === "object" ? t.symbols : {},
+    timeRanges: ctr(t.timeRanges),
+    expiresAt: +t.expiresAt||0,
+    apiUrl: String(t.apiUrl||""), method: String(t.method||"POST").toUpperCase(),
+    headers: String(t.headers||""), body: String(t.body||""),
+    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||"") };
 }
 
-function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:true, apiUrl:"https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order", method:"POST", headers:"Content-Type: application/json\nclienttype: web", body:'{"orderAmount":"{{amount}}","timeIncrements":"{{unit}}","symbolName":"BTCUSDT","payoutRatio":"0.80","direction":"{{action}}"}', valueBuy:"LONG", valueSell:"SHORT" }); }
+function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:true, valueBuy:"LONG", valueSell:"SHORT" }); }
+
+function platformDefaults(type) {
+  if (type === "turboflow") return { valueBuy: "1", valueSell: "3" };
+  if (type === "hibt") return { valueBuy: "1", valueSell: "2" };
+  if (type === "raw") return { valueBuy: "buy", valueSell: "sell" };
+  return { valueBuy: "LONG", valueSell: "SHORT" };
+}
+
+window.onAccountTypeChange = function(sel) {
+  const card = sel.closest('[data-task-card="1"]'); if (!card) return;
+  const d = platformDefaults(sel.value);
+  const set = (f, v) => { const e = card.querySelector(`[data-field="${f}"]`); if (e && !e.value) e.value = v; };
+  set("valueBuy", d.valueBuy);
+  set("valueSell", d.valueSell);
+};
+
+window.syncBinanceAuthFields = function(input) {
+  const card = input.closest('[data-task-card="1"]'); if (!card) return;
+  const csrf = card.querySelector('[data-field="auth-csrftoken"]')?.value || "";
+  const p20t = card.querySelector('[data-field="auth-p20t"]')?.value || "";
+  const authField = card.querySelector('[data-field="auth"]');
+  const auth = { csrftoken: csrf.trim(), p20t: p20t.trim() };
+  if (authField) authField.value = JSON.stringify(auth, null, 2);
+  const tid = card.getAttribute("data-task-id");
+  const st = stateTasks.find(t => t.id === tid);
+  if (st) st.auth = auth;
+};
 
 // ── Upstream Render ──
 
@@ -183,6 +222,28 @@ function renderTasks(ts) {
   initCountdowns(); bind(c);
 }
 
+function authPlaceholder(type) {
+  if (type === "binance") return '{"csrftoken":"...","p20t":"..."}';
+  if (type === "hibt") return '{"v":"...","x-auth-token":"...","authorization":"..."}';
+  if (type === "turboflow") return '{"authorization":"...","uid":"...","biz-pf":"..."}';
+  return '{}';
+}
+
+function authDisplayValue(t) {
+  const auth = t.auth || {};
+  return JSON.stringify(auth, null, 2);
+}
+
+function platformBadge(type) {
+  const map = {
+    binance: "bg-yellow-50 text-yellow-700 border-yellow-200",
+    hibt: "bg-blue-50 text-blue-700 border-blue-200",
+    turboflow: "bg-purple-50 text-purple-700 border-purple-200"
+  };
+  const cls = map[type] || "bg-gray-50 text-gray-600 border-gray-200";
+  return `<span class="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded-full border ${cls}">${esc(type)}</span>`;
+}
+
 function card(t, idx) {
   const id = t.id;
   return `<div class="bg-white border rounded-lg p-3 space-y-2.5" data-task-card="1" data-task-id="${id}">
@@ -191,24 +252,37 @@ function card(t, idx) {
       <div class="flex items-center gap-2">
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
         <input class="border rounded px-2 py-1 text-xs font-semibold w-28" data-field="name" value="${esc(t.name)}" />
+        ${platformBadge(t.type)}
         <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>
-      <div class="flex items-center gap-1">
-        <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" onclick="promptImportToken('${id}')">Token</button>
+      <div class="flex items-center gap-1 flex-wrap">
+        <button class="border rounded px-2 py-1 text-[10px] bg-yellow-50 text-yellow-700 hover:bg-yellow-100" onclick="promptImportPlatformToken('${id}','binance')">币安Token</button>
+        <button class="border rounded px-2 py-1 text-[10px] bg-blue-50 text-blue-700 hover:bg-blue-100" onclick="promptImportPlatformToken('${id}','hibt')">HIBT Token</button>
+        <button class="border rounded px-2 py-1 text-[10px] bg-purple-50 text-purple-700 hover:bg-purple-100" onclick="promptImportPlatformToken('${id}','turboflow')">TurboFlow Token</button>
         <button class="rounded px-2 py-1 text-[11px] font-medium text-white" style="background:var(--g)" data-action="test-buy" data-task-id="${id}">BUY</button>
         <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" data-action="test-sell" data-task-id="${id}">SELL</button>
-        <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" onclick="promptImportCurl('${id}')">cURL</button>
         <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete" data-task-id="${id}">✕</button>
       </div>
     </div>
 
-    <!-- Row: API URL -->
+    <!-- Row: Platform & Auth -->
     <div class="flex gap-2 items-end">
-      <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">API URL</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." /></div>
-      <div style="width:5rem"><label class="block text-[11px] text-gray-500 mb-0.5">Method</label><select class="border rounded w-full px-2 py-1 text-xs bg-white" data-field="method">${["GET","POST","PUT","DELETE"].map(m=>`<option ${t.method===m?"selected":""}>${m}</option>`).join("")}</select></div>
-      <div style="width:7rem"><label class="block text-[11px] text-gray-500 mb-0.5">代理</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="httpProxyUrl" value="${esc(t.httpProxyUrl)}" placeholder="可选" /></div>
+      <div style="width:8rem"><label class="block text-[11px] text-gray-500 mb-0.5">平台</label><select class="border rounded w-full px-2 py-1 text-xs bg-white" data-field="type" onchange="onAccountTypeChange(this)">${["binance","hibt","turboflow","raw"].map(m=>`<option ${t.type===m?"selected":""}>${m}</option>`).join("")}</select></div>
+      <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">Auth</label><textarea class="border rounded w-full px-2 py-1 text-xs font-mono resize-y" rows="3" data-field="auth" placeholder="${esc(authPlaceholder(t.type))}">${esc(authDisplayValue(t))}</textarea></div>
     </div>
+
+    ${t.type === "binance" ? `<div class="flex gap-2 items-end">
+      <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">csrftoken</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="auth-csrftoken" value="${esc(t.auth?.csrftoken||"")}" oninput="syncBinanceAuthFields(this)" /></div>
+      <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">p20t</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="auth-p20t" value="${esc(t.auth?.p20t||"")}" oninput="syncBinanceAuthFields(this)" /></div>
+    </div>` : ""}
+
+    ${t.type === "raw" ? `<div class="grid gap-2 sm:grid-cols-2">
+      <div><label class="block text-[11px] text-gray-500 mb-0.5">API URL</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." /></div>
+      <div><label class="block text-[11px] text-gray-500 mb-0.5">Method</label><select class="border rounded w-full px-2 py-1 text-xs bg-white" data-field="method">${["GET","POST","PUT","DELETE"].map(m=>`<option ${t.method===m?"selected":""}>${m}</option>`).join("")}</select></div>
+      <div class="sm:col-span-2"><label class="block text-[11px] text-gray-500 mb-0.5">Headers</label><textarea class="border rounded w-full px-2 py-1 text-xs font-mono resize-y" rows="3" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea></div>
+      <div class="sm:col-span-2"><label class="block text-[11px] text-gray-500 mb-0.5">Body</label><textarea class="border rounded w-full px-2 py-1 text-xs font-mono resize-y" rows="3" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea></div>
+    </div>` : ""}
 
     <!-- Row: Time ranges -->
     <div class="flex gap-2 items-start">
@@ -217,24 +291,13 @@ function card(t, idx) {
         <div class="space-y-1" data-time-ranges="1" data-task-id="${id}">${trHtml(id, t.timeRanges)}</div>
         <button class="border rounded px-2 py-0.5 text-[10px] bg-white hover:bg-gray-50 mt-1" data-action="add-time-range" data-task-id="${id}">+ 时段</button>
       </div>
-      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Symbol过滤</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="allowedSymbols" value="${esc(t.allowedSymbols)}" placeholder="BTCUSDT" /></div>
-      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">Token组</label><input class="border rounded w-full px-2 py-1 text-xs" data-field="group" value="${esc(t.group)}" placeholder="同一token填相同组" /></div>
     </div>
 
-    <!-- Collapsible: Headers & Body -->
-    <div>
-      <span class="text-[11px] text-gray-500 cursor-pointer select-none hover:text-gray-700" onclick="this.nextElementSibling.classList.toggle('hidden')">▸ Headers & Body</span>
-      <div class="hidden grid gap-2 sm:grid-cols-2 mt-1">
-        <textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="4" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea>
-        <textarea class="border rounded w-full px-2 py-1 text-[11px] font-mono" rows="4" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea>
-      </div>
-    </div>
-
-    <!-- Row: buy / sell / proba / 过期 -->
+    <!-- Row: buy / sell / 过期 -->
     <div class="flex items-center gap-2 flex-wrap">
       <div class="flex items-center gap-1"><span class="text-[11px] text-gray-500 flex-shrink-0">buy→</span><input class="border rounded px-2 py-1 text-xs" style="width:5rem" data-field="valueBuy" value="${esc(t.valueBuy)}" placeholder="LONG" /></div>
       <div class="flex items-center gap-1"><span class="text-[11px] text-gray-500 flex-shrink-0">sell→</span><input class="border rounded px-2 py-1 text-xs" style="width:5rem" data-field="valueSell" value="${esc(t.valueSell)}" placeholder="SHORT" /></div>
-      <div class="flex items-center gap-0.5"><span class="text-[11px] text-gray-500 flex-shrink-0">proba≥</span><input type="number" step="0.01" min="0" max="1" class="border rounded px-1.5 py-1 text-xs" style="width:4rem" data-field="minProba" value="${t.minProba||0}" placeholder="0" /></div>
+      <input type="hidden" data-field="symbols" value="${esc(JSON.stringify(t.symbols||{}))}" />
       <input type="hidden" data-field="expiresAt" value="${t.expiresAt||0}" />
       <div class="expires-row">
         <span id="expires-display-${id}" class="expires-display">${fmtDT(t.expiresAt)}</span>
@@ -262,16 +325,163 @@ function collectTasks() {
     const id=card.getAttribute("data-task-id")||rid("acct");
     const g=f=>{const e=card.querySelector(`[data-field="${f}"]`);return e?e.value:""};
     const gc=f=>{const e=card.querySelector(`[data-field="${f}"]`);return !!(e&&e.checked)};
+    const type = String(g("type")||"binance").trim() || "binance";
+    let auth = {};
+    if (type === "binance") {
+      try { auth = JSON.parse(g("auth")||"{}") || {}; } catch { auth = {}; }
+      const csrf = String(g("auth-csrftoken")||"").trim();
+      const p20t = String(g("auth-p20t")||"").trim();
+      if (csrf || p20t) {
+        auth.csrftoken = csrf;
+        auth.p20t = p20t;
+      }
+    } else {
+      try { auth = JSON.parse(g("auth")||"{}") || {}; } catch { auth = {}; }
+    }
+    let symbols = {};
+    try { symbols = JSON.parse(g("symbols")||"{}") || {}; } catch { symbols = {}; }
     return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"),
-      group: String(g("group")||"").trim(), timeRanges: colTR(card), allowedSymbols: String(g("allowedSymbols")||"").trim(), expiresAt:+g("expiresAt")||0,
-      httpProxyUrl: String(g("httpProxyUrl")||"").trim(), apiUrl: String(g("apiUrl")||"").trim(),
-      method: String(g("method")||"POST").trim().toUpperCase(), headers: String(g("headers")||""), body: String(g("body")||""),
-      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim(),
-      minProba: parseFloat(g("minProba"))||0 };
+      type, auth, symbols,
+      timeRanges: colTR(card), expiresAt:+g("expiresAt")||0,
+      apiUrl: String(g("apiUrl")||"").trim(), method: String(g("method")||"POST").trim().toUpperCase(),
+      headers: String(g("headers")||""), body: String(g("body")||""),
+      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim() };
   });
 }
 
-function validate(ts) { ts.forEach(t=>{ if(!t.apiUrl) throw new Error(`账号[${t.name}] API URL 为空`); vtr(t); }); }
+// ── Strategies ──
+
+function normalizeStrategies(c) {
+  const s = Array.isArray(c?.strategies) ? c.strategies : [];
+  return s.map(ns);
+}
+
+function ns(s) {
+  s = s || {};
+  // name/id 统一为 id，页面直接编辑 id
+  const id = String(s.id || s.name || "").trim() || rid("strategy");
+  return {
+    id,
+    name: id,
+    enabled: s.enabled!==false,
+    groups: Array.isArray(s.groups) ? s.groups.map(ng) : []
+  };
+}
+
+function ng(g) {
+  g = g || {};
+  let accounts = [];
+  if (Array.isArray(g.accounts)) {
+    accounts = g.accounts.map(a => ({ accountId: String(a.accountId||""), amount: String(a.amount||"").trim() }));
+  } else if (Array.isArray(g.accountIds)) {
+    accounts = g.accountIds.map(id => ({ accountId: String(id), amount: "" }));
+  }
+  return {
+    id: String(g.id||"").trim()||rid("grp"),
+    name: String(g.name||"").trim()||"新分组",
+    enabled: g.enabled!==false,
+    dispatch: String(g.dispatch||"random").trim() || "random",
+    accounts
+  };
+}
+
+function defaultGroup() { return ng({ id:rid("grp"), name:"新分组", enabled:true, dispatch:"random", accounts:[] }); }
+function defaultStrategy() { return ns({ name:rid("strategy"), enabled:true, groups:[defaultGroup()] }); }
+
+function renderStrategies(ss) {
+  const c = $("strategies-container"); if (!c) return;
+  if (!ss?.length) { c.innerHTML = '<div class="text-[11px] text-gray-400">暂无策略，点击"+ 策略"添加</div>'; return; }
+  c.innerHTML = ss.map((s,i) => strategyCard(s,i+1)).join("\n");
+  bindStrategies(c);
+}
+
+function strategyCard(s, idx) {
+  const groupsHtml = s.groups.map((g) => groupHtml(g)).join("\n");
+  return `<div class="bg-white border rounded-lg p-3 space-y-2" data-strategy-card data-strategy-id="${s.id}">
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
+      <input class="border rounded px-2 py-1 text-xs font-semibold w-48" data-field="strategy-id" value="${esc(s.id)}" title="策略ID（name/id已统一，直接改这里）" />
+      <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input type="checkbox" data-field="strategy-enabled" ${s.enabled?"checked":""} /><span class="switch-track"></span></span></label>
+      <div class="flex-1"></div>
+      <button class="border rounded px-2 py-1 text-[11px] bg-white hover:bg-gray-50" data-action="add-group" data-strategy-id="${s.id}">+ 分组</button>
+      <button class="border border-red-200 rounded px-2 py-1 text-[11px] bg-white text-red-600 hover:bg-red-50" data-action="delete-strategy" data-strategy-id="${s.id}">✕</button>
+    </div>
+    <div class="space-y-2" data-groups-container>${groupsHtml}</div>
+  </div>`;
+}
+
+function groupHtml(g) {
+  const opts = ["random","round-robin","all"].map(m=>`<option ${g.dispatch===m?"selected":""}>${m}</option>`).join("");
+  const rows = stateTasks.length
+    ? stateTasks.map(t=>{
+        const binding = (g.accounts||[]).find(a => a.accountId === t.id) || { amount: "" };
+        const checked = (g.accounts||[]).some(a => a.accountId === t.id) ? "checked" : "";
+        return `<div class="flex items-center gap-1.5"><input type="checkbox" data-group-account="${esc(t.id)}" ${checked} /><span class="text-[11px] text-gray-600">${esc(t.name)}</span><input class="border rounded px-1.5 py-0.5 text-[11px]" style="width:4rem" data-group-amount="${esc(t.id)}" value="${esc(binding.amount)}" placeholder="金额" /></div>`;
+      }).join("")
+    : '<span class="text-[11px] text-gray-400">暂无账号，请先在账号库添加</span>';
+  return `<div class="border rounded p-2 bg-gray-50" data-group-card data-group-id="${g.id}">
+    <div class="flex items-center gap-2 flex-wrap">
+      <input class="border rounded px-2 py-1 text-xs font-medium w-40 bg-white" data-field="group-name" value="${esc(g.name)}" />
+      <select class="border rounded px-2 py-1 text-xs bg-white" data-field="group-dispatch">${opts}</select>
+      <label class="switch-label"><span class="text-[11px] text-gray-500">启用</span><span class="switch"><input type="checkbox" data-field="group-enabled" ${g.enabled?"checked":""} /><span class="switch-track"></span></span></label>
+      <button class="border border-red-200 rounded px-1.5 py-0.5 text-[10px] bg-white text-red-600 hover:bg-red-50" data-action="delete-group" data-group-id="${g.id}">✕</button>
+    </div>
+    <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1">${rows}</div>
+  </div>`;
+}
+
+function bindStrategies(container) {
+  const sidOf = (el) => {
+    const card = el.closest('[data-strategy-card]');
+    if (!card) return "";
+    const input = card.querySelector('[data-field="strategy-id"]');
+    return String(input?.value || "").trim() || card.getAttribute("data-strategy-id") || "";
+  };
+  container.querySelectorAll('[data-action="delete-strategy"]').forEach(b => {
+    b.addEventListener("click", () => {
+      const id = sidOf(b);
+      stateStrategies = stateStrategies.filter(s => s.id !== id);
+      renderStrategies(stateStrategies);
+    });
+  });
+  container.querySelectorAll('[data-action="add-group"]').forEach(b => {
+    b.addEventListener("click", () => {
+      const id = sidOf(b);
+      const st = stateStrategies.find(s => s.id === id);
+      if (st) { st.groups.push(defaultGroup()); renderStrategies(stateStrategies); }
+    });
+  });
+  container.querySelectorAll('[data-action="delete-group"]').forEach(b => {
+    b.addEventListener("click", () => {
+      const gid = b.getAttribute("data-group-id");
+      const id = sidOf(b);
+      const st = stateStrategies.find(s => s.id === id);
+      if (st) { st.groups = st.groups.filter(g => g.id !== gid); renderStrategies(stateStrategies); }
+    });
+  });
+}
+
+function collectStrategies() {
+  return [...document.querySelectorAll('[data-strategy-card]')].map(card => {
+    const g = f => { const e = card.querySelector(`[data-field="${f}"]`); return e ? e.value : ""; };
+    const gc = f => { const e = card.querySelector(`[data-field="${f}"]`); return !!(e && e.checked); };
+    const id = String(g("strategy-id")||"").trim() || card.getAttribute("data-strategy-id") || rid("strategy");
+    const groups = [...card.querySelectorAll('[data-group-card]')].map(gcrd => {
+      const gid = gcrd.getAttribute("data-group-id") || rid("grp");
+      const gg = f => { const e = gcrd.querySelector(`[data-field="${f}"]`); return e ? e.value : ""; };
+      const gchk = f => { const e = gcrd.querySelector(`[data-field="${f}"]`); return !!(e && e.checked); };
+      const accounts = [...gcrd.querySelectorAll('[data-group-account]')].filter(c => c.checked).map(c => {
+        const aid = c.getAttribute("data-group-account");
+        const amt = gcrd.querySelector(`[data-group-amount="${cssEscape(aid)}"]`);
+        return { accountId: aid, amount: String(amt?.value || "").trim() };
+      });
+      return { id: gid, name: String(gg("group-name")||"").trim()||gid, enabled: gchk("group-enabled"), dispatch: String(gg("group-dispatch")||"random").trim()||"random", accounts };
+    });
+    return { id, name: id, enabled: gc("strategy-enabled"), groups };
+  });
+}
+
+function validate(ts) { ts.forEach(t=>{ vtr(t); }); }
 function vtr(t) { const r=ctr(t.timeRanges); if(r.length>4) throw new Error(`账号[${t.name}] 最多4段`);
   r.forEach((x,i)=>{ const l=`账号[${t.name}] 时段#${i+1}`; if(!x.start||!x.end) throw new Error(`${l} 起止必填`);
     const sm=pm(x.start,l), em=pm(x.end,l); if(sm===em) throw new Error(`${l} 起止不能相同`); }); }
@@ -385,47 +595,59 @@ async function testTask(btn, action) {
   catch(e) { log(`测试失败: ${e.message}`, "ERROR"); }
 }
 
-// ── cURL ──
-
-function promptImportCurl(tid) {
-  const s=prompt("粘贴 curl:");if(!s)return;
-  try{const p=parseCurl(s);const c=document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);if(!c)return;
-    const set=(f,v)=>{const e=c.querySelector(`[data-field="${f}"]`);if(e)e.value=v??"";};
-    if(p.url)set("apiUrl",p.url);if(p.method)set("method",p.method);if(p.headers)set("headers",p.headers);if(p.body)set("body",p.body);
-    log("cURL 已导入");}catch(e){alert("解析失败: "+e.message);}
-}
-
-function promptImportToken(tid) {
-  const s=prompt("粘贴 curl:");if(!s)return;
-  try{const p=parseCurl(s);const c=document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);if(!c)return;
-    const found=[];
-    for(const line of (p.headers||"").split("\n")){
-      const m=/^([^:]+):\s*(.*)$/.exec(line.trim());if(!m)continue;
-      if(m[1].trim().toLowerCase()==="csrftoken"){found.push(["csrftoken",m[2].trim()]);break;}
+function promptImportPlatformToken(tid, type) {
+  const s=prompt(`粘贴 ${type} 平台的 curl:`); if(!s) return;
+  try {
+    const p=parseCurl(s);
+    const card=document.querySelector(`[data-task-card="1"][data-task-id="${cssEscape(tid)}"]`);
+    if(!card) return;
+    const headerObj = {};
+    for(const line of (p.headers||"").split("\n")) {
+      const m=/^([^:]+):\s*(.*)$/.exec(line.trim()); if(!m) continue;
+      headerObj[m[1].trim().toLowerCase()] = m[2].trim();
     }
-    const cl=(p.headers||"").split("\n").find(l=>/^[Cc]ookie:/.test(l));
-    const pm=cl&&/p20t=[^;\s]*/.exec(cl);
-    if(pm)found.push(["Cookie",pm[0]]);
-    if(!found.length){alert("未解析到 csrftoken/p20t");return;}
-    const ta=c.querySelector('[data-field="headers"]');if(!ta)return;
-    mergeAuthHeaders(ta,found);
-    showToast("Token 已导入");
-  }catch(e){alert("解析失败: "+e.message);}
+
+    const authField = card.querySelector('[data-field="auth"]');
+    const typeField = card.querySelector('[data-field="type"]');
+    let auth = {};
+
+    if (type === "binance") {
+      if (!headerObj["csrftoken"] && !headerObj["cookie"]) { alert("未解析到 csrftoken 或 Cookie"); return; }
+      if (headerObj["csrftoken"]) auth.csrftoken = headerObj["csrftoken"];
+      const cookie = headerObj["cookie"] || "";
+      const pm = /(?:^|;\s*)p20t=([^;\s]+)/.exec(cookie);
+      if (pm) auth.p20t = pm[1];
+      if (!auth.p20t && headerObj["p20t"]) auth.p20t = headerObj["p20t"];
+      if (!auth.csrftoken && !auth.p20t) { alert("未解析到 csrftoken 或 p20t"); return; }
+    } else if (type === "hibt") {
+      const token = headerObj["x-auth-token"] || headerObj["authorization"];
+      if (!token) { alert("未解析到 x-auth-token 或 Authorization"); return; }
+      auth["x-auth-token"] = headerObj["x-auth-token"] || token;
+      if (headerObj["authorization"]) auth.authorization = headerObj["authorization"];
+      const vm = /[?&]v=([^&\s]+)/.exec(p.url || "");
+      if (vm) auth.v = decodeURIComponent(vm[1]);
+    } else if (type === "turboflow") {
+      if (!headerObj["authorization"] && !headerObj["uid"]) { alert("未解析到 authorization 或 uid"); return; }
+      if (headerObj["authorization"]) auth.authorization = headerObj["authorization"];
+      if (headerObj["uid"]) auth.uid = headerObj["uid"];
+      if (headerObj["biz-pf"]) auth["biz-pf"] = headerObj["biz-pf"];
+    }
+
+    if (authField) authField.value = authDisplayValue({ type, auth });
+    if (typeField) typeField.value = type;
+    if (type === "binance") {
+      const csrfField = card.querySelector('[data-field="auth-csrftoken"]');
+      const p20tField = card.querySelector('[data-field="auth-p20t"]');
+      if (csrfField) csrfField.value = auth.csrftoken || "";
+      if (p20tField) p20tField.value = auth.p20t || "";
+    }
+    const st = stateTasks.find(t => t.id === tid);
+    if (st) { st.auth = auth; st.type = type; }
+    showToast(`${type} Token 已导入`);
+  } catch(e) { alert("解析失败: "+e.message); }
 }
 
-function mergeAuthHeaders(textarea, headers) {
-  const lines=(textarea.value||"").split("\n");
-  for(const [name,value] of headers){
-    const line=`${name}: ${value}`;
-    const idx=lines.findIndex(l=>{
-      const m=/^([^:]+):/.exec(l);return m&&m[1].trim().toLowerCase()===name.toLowerCase();
-    });
-    if(idx>=0){const om=/^([^:]+):/.exec(lines[idx]);lines[idx]=om?om[1].trim()+": "+value:line;}else lines.push(line);
-  }
-  textarea.value=lines.filter(Boolean).join("\n");
-}
-
-window.promptImportToken = promptImportToken;
+window.promptImportPlatformToken = promptImportPlatformToken;
 
 function parseCurl(s) {
   s=s.replace(/\\\n/g," ").replace(/\n/g," ");

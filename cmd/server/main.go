@@ -161,10 +161,11 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.M
 			_ = json.NewEncoder(w).Encode(cfg)
 		case http.MethodPost:
 			var payload struct {
-				Upstreams []config.UpstreamConfig `json:"upstreams"`
-				WSServer  config.WSServerConfig   `json:"wsServer"`
-				Dispatch  string                  `json:"dispatch"`
-				Tasks     []config.TaskConfig     `json:"tasks"`
+				Upstreams  []config.UpstreamConfig `json:"upstreams"`
+				WSServer   config.WSServerConfig   `json:"wsServer"`
+				Dispatch   string                  `json:"dispatch"`
+				Tasks      []config.TaskConfig     `json:"tasks"`
+				Strategies []config.StrategyConfig `json:"strategies"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
@@ -174,6 +175,9 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.M
 
 			if payload.Tasks == nil {
 				payload.Tasks = []config.TaskConfig{}
+			}
+			if payload.Strategies == nil {
+				payload.Strategies = []config.StrategyConfig{}
 			}
 			if err := config.PrepareTasks(payload.Tasks); err != nil {
 				logger.Error("config", fmt.Sprintf("reject invalid config payload: %v", err))
@@ -186,6 +190,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.M
 				c.WSServer = payload.WSServer
 				c.Dispatch = payload.Dispatch
 				c.Tasks = payload.Tasks
+				c.Strategies = payload.Strategies
 			}); err != nil {
 				logger.Error("config", fmt.Sprintf("update config error: %v", err))
 				w.WriteHeader(http.StatusInternalServerError)
@@ -266,6 +271,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			TaskID string `json:"taskId"`
 			Action string `json:"action"`
 			Symbol string `json:"symbol"`
+			Period string `json:"period"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -290,6 +296,10 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 		if symbol == "" {
 			symbol = "BTCUSDT" // Default for testing if empty
 		}
+		period := strings.TrimSpace(payload.Period)
+		if period == "" {
+			period = "5m"
+		}
 
 		cfg := cfgMgr.Get()
 		task, ok := findTask(cfg.Tasks, taskID)
@@ -311,6 +321,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			Unit:   "TEN_MINUTE",
 			Action: action,
 			Symbol: symbol,
+			Period: period,
 			IsTest: true,
 		}); err != nil {
 			logger.Error("test", fmt.Sprintf("test task order error task=[%s]: %v", task.Name, err))
