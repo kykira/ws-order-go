@@ -20,7 +20,7 @@
     {
       "id": "up-2e3s3c",
       "name": "btclocal",
-      "wsUrl": "ws://127.0.0.1:8081/ws/engine",
+      "wsUrl": "ws://127.0.0.1:8083/ws/engine",
       "wsKey": "",
       "enabled": true
     }
@@ -34,36 +34,177 @@
   "dispatch": "all",
   "tasks": [
     {
-      "id": "acct-1",
-      "name": "菲梨btc",
+      "id": "tf-pair6",
+      "name": "TurboFlow",
+      "type": "turboflow",
+      "auth": {
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTA0MTk0MTAsImp3dElkIjoiMzhiN2E2YjItMzMyYS00OWU0LThmYzgtYzBjOTliMzRjNDZmIiwib3JpZ19pYXQiOjE3ODc4Mjc0MTAsInRrVmFsU3RhIjp0cnVlLCJ1c2VySWQiOiI1NjEyNjY0NTI4NDEzMjE0NzIiLCJ1c2VyTGFzdExvZ2luQXQiOiIyMDI2LTA4LTI3VDEwOjQzOjMwLjA1ODg1NzEzNloiLCJ1c2VyUm9sZVR5cGUiOiIwIn0.ftF1tSHvLnZMiWYs3XTS4307ksGAnZcQDHWUhKs5LTc",
+        "biz-pf": "6",
+        "uid": "561266452841321472"
+      },
+      "symbols": {
+        "BTCUSDT": {
+          "coin_code": "1",
+          "pair_id": "6",
+          "pool_id": "1",
+          "return_rate": "85"
+        },
+        "ETHUSDT": {
+          "coin_code": "1",
+          "pair_id": "5",
+          "pool_id": "11",
+          "return_rate": "85"
+        }
+      },
       "enabled": true,
       "skipSignals": 0,
-      "allowedSymbols": "BTCUSDT",
-      "expiresAt": 1785727904,
-      "httpProxyUrl": "",
-      "apiUrl": "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
-      "method": "POST",
-      "headers": "content-type: application/json\nclienttype: web\ncsrftoken: ec70c0e5b4cc6ee00c5c9aad0563b4da\nCookie: p20t=web.1208521138.13A8C17795F0DB76049138C2FAF682C1",
-      "body": "{\"direction\":\"{{action}}\",\"timeIncrements\":\"THIRTY_MINUTE\",\"orderAmount\":10,\"payoutRatio\":0.85,\"walletType\":\"UM\",\"symbolName\":\"BTCUSDT\"}",
-      "valueBuy": "LONG",
-      "valueSell": "SHORT",
-      "minProba": 0.58
+      "expiresAt": 0,
+      "valueBuy": "1",
+      "valueSell": "3"
     },
     {
-      "id": "acct-4hydan",
-      "name": "New Account",
-      "enabled": true,
+      "id": "acct-r8t3cn",
+      "name": "hb",
+      "type": "hibt",
+      "auth": {
+        "authorization": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJIT1RTLUNPSU4tSldUIiwiYXVkIjoibWVtYmVyIiwibmJmIjoxNzg3ODkyNDc5LCJpc3MiOiJBenVyZSIsImJvZHkiOnsidUlkIjoiMjA2OTMxMjQ3MDAwMTYxOSIsImZVSWQiOjM1MjMxNywicm9sZXMiOjEsImlwIjoiZWFmNTUwNmE1ODE1OTMzNmM1NGMxNzA1ZDczYTBmYWQiLCJBUElfTUVNQkVSIjoie1wiY2hhbm5lbElkXCI6MCxcImlkXCI6MzQyMzE3LFwibWVtYmVyTGV2ZWxcIjpcIkdFTkVSQUxcIixcIm1lcmNoYW50VHlwZVwiOjAsXCJwYXJ0bmVyVHlwZVwiOjIsXCJwcm9tb3Rpb25Db2RlXCI6XCJRSFRIXCIsXCJyZWdpc3RlclRpbWVcIjoxNzg3ODkyNDc5NDk5LFwic3RhdHVzXCI6XCJOT1JNQUxcIixcInVJZFwiOjIwNjkzMTI0NzAwMDE2MTl9IiwicGxhdGZvcm0iOiJQQyJ9LCJpYXQiOjE3ODc4OTI0NzksImp0aSI6IjVjYjU3MmNmNGYxMDRiNDE4YWFjYWY2MjdkNjE5ZGFiIn0.FoQxT_HEDHwNAlGKASGvRalWTN0m-Buga7e-etXx40Q",
+        "x-auth-token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJIT1RTLUNPSU4tSldUIiwiYXVkIjoibWVtYmVyIiwibmJmIjoxNzg3ODkyNDc5LCJpc3MiOiJBenVyZSIsImJvZHkiOnsidUlkIjoiMjA2OTMxMjQ3MDAwMTYxOSIsImZVSWQiOjM1MjMxNywicm9sZXMiOjEsImlwIjoiZWFmNTUwNmE1ODE1OTMzNmM1NGMxNzA1ZDczYTBmYWQiLCJBUElfTUVNQkVSIjoie1wiY2hhbm5lbElkXCI6MCxcImlkXCI6MzQyMzE3LFwibWVtYmVyTGV2ZWxcIjpcIkdFTkVSQUxcIixcIm1lcmNoYW50VHlwZVwiOjAsXCJwYXJ0bmVyVHlwZVwiOjIsXCJwcm9tb3Rpb25Db2RlXCI6XCJRSFRIXCIsXCJyZWdpc3RlclRpbWVcIjoxNzg3ODkyNDc5NDk5LFwic3RhdHVzXCI6XCJOT1JNQUxcIixcInVJZFwiOjIwNjkzMTI0NzAwMDE2MTl9IiwicGxhdGZvcm0iOiJQQyJ9LCJpYXQiOjE3ODc4OTI0NzksImp0aSI6IjVjYjU3MmNmNGYxMDRiNDE4YWFjYWY2MjdkNjE5ZGFiIn0.FoQxT_HEDHwNAlGKASGvRalWTN0m-Buga7e-etXx40Q"
+      },
+      "enabled": false,
       "skipSignals": 0,
-      "allowedSymbols": "ETHUSDT",
       "expiresAt": 0,
-      "httpProxyUrl": "",
-      "apiUrl": "https://www.binance.com/bapi/futures/v2/private/future/event-contract/place-order",
-      "method": "POST",
-      "headers": "content-type: application/json\nclienttype: web\ncsrftoken: ec70c0e5b4cc6ee00c5c9aad0563b4da\nCookie: p20t=web.1208521138.13A8C17795F0DB76049138C2FAF682C1",
-      "body": "{\"orderAmount\":\"{{amount}}\",\"timeIncrements\":\"{{unit}}\",\"symbolName\":\"BTCUSDT\",\"payoutRatio\":\"0.80\",\"direction\":\"{{action}}\"}",
+      "valueBuy": "1",
+      "valueSell": "2"
+    },
+    {
+      "id": "acct-yjcki2",
+      "name": "New Account",
+      "type": "binance",
+      "auth": {
+        "csrftoken": "eed08b5b922ce9b23f6d90aad4ee7935",
+        "p20t": "web.1272166681.535F37B41973C6C92CD50EF61BFF36EB"
+      },
+      "enabled": false,
+      "skipSignals": 0,
+      "expiresAt": 0,
       "valueBuy": "LONG",
-      "valueSell": "SHORT",
-      "minProba": 0
+      "valueSell": "SHORT"
+    },
+    {
+      "id": "dq-btc",
+      "name": "DoraQuant-BTC",
+      "type": "raw",
+      "enabled": true,
+      "allowedSymbols": "BTCUSDT",
+      "skipSignals": 0,
+      "expiresAt": 0,
+      "apiUrl": "https://doraquant.xyz/webhook",
+      "method": "POST",
+      "headers": "content-type: application/json",
+      "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"VEIOU98Y\",\"tf\":\"{{period}}\"}",
+      "valueBuy": "long",
+      "valueSell": "short"
+    },
+    {
+      "id": "dq-eth",
+      "name": "DoraQuant-ETH",
+      "type": "raw",
+      "enabled": true,
+      "allowedSymbols": "ETHUSDT",
+      "skipSignals": 0,
+      "expiresAt": 0,
+      "apiUrl": "https://doraquant.xyz/webhook",
+      "method": "POST",
+      "headers": "content-type: application/json",
+      "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"2FP5TALL\",\"tf\":\"{{period}}\"}",
+      "valueBuy": "long",
+      "valueSell": "short"
+    }
+  ],
+  "strategies": [
+    {
+      "id": "strategy-btc-5m",
+      "name": "strategy-btc-5m",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-turboflow",
+          "name": "TurboFlow组",
+          "enabled": true,
+          "dispatch": "random",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            }
+          ]
+        },
+        {
+          "id": "grp-dq",
+          "name": "DoraQuant组",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "dq-btc"
+            }
+          ]
+        },
+        {
+          "id": "grp-hibt",
+          "name": "HIBT组",
+          "enabled": false,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "3"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "strategy-eth-30m",
+      "name": "strategy-eth-30m",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-turboflow",
+          "name": "TurboFlow组",
+          "enabled": true,
+          "dispatch": "random",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            }
+          ]
+        },
+        {
+          "id": "grp-dq",
+          "name": "DoraQuant组",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "dq-eth"
+            }
+          ]
+        },
+        {
+          "id": "grp-hibt",
+          "name": "HIBT组",
+          "enabled": false,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "3"
+            }
+          ]
+        }
+      ]
     }
   ]
 }

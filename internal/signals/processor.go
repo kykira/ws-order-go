@@ -85,6 +85,9 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	var matched []config.TaskConfig
 	var matchedRange string
 	for _, task := range cfg.Tasks {
+		if task.Type == "raw" {
+			continue // raw 任务(如 webhook)只在 strategy group 显式绑定, 不进 legacy flat-task
+		}
 		allowed, rangeDesc := p.taskMatches(sig, action, task, applySkip)
 		if allowed {
 			matched = append(matched, task)

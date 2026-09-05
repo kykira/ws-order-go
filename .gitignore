@@ -1,2 +1,5 @@
 server
 data/
+.mnemon/
+*.log
+*.bak*
