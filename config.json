@@ -150,37 +150,6 @@
               "accountId": "dq-btc"
             }
           ]
-        },
-        {
-          "id": "grp-hibt",
-          "name": "HIBT组",
-          "enabled": false,
-          "dispatch": "all",
-          "accounts": [
-            {
-              "accountId": "acct-r8t3cn",
-              "amount": "3"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "btc-30m-v3",
-      "name": "btc-30m-v3",
-      "enabled": true,
-      "groups": [
-        {
-          "id": "grp-turboflow",
-          "name": "TurboFlow组",
-          "enabled": true,
-          "dispatch": "random",
-          "accounts": [
-            {
-              "accountId": "tf-pair6",
-              "amount": "2"
-            }
-          ]
         }
       ]
     },
@@ -209,18 +178,6 @@
           "accounts": [
             {
               "accountId": "dq-eth"
-            }
-          ]
-        },
-        {
-          "id": "grp-hibt",
-          "name": "HIBT组",
-          "enabled": false,
-          "dispatch": "all",
-          "accounts": [
-            {
-              "accountId": "acct-r8t3cn",
-              "amount": "3"
             }
           ]
         }
