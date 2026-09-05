@@ -59,6 +59,7 @@
       "enabled": true,
       "skipSignals": 0,
       "expiresAt": 0,
+      "method": "POST",
       "valueBuy": "1",
       "valueSell": "3"
     },
@@ -73,6 +74,7 @@
       "enabled": false,
       "skipSignals": 0,
       "expiresAt": 0,
+      "method": "POST",
       "valueBuy": "1",
       "valueSell": "2"
     },
@@ -87,6 +89,7 @@
       "enabled": false,
       "skipSignals": 0,
       "expiresAt": 0,
+      "method": "POST",
       "valueBuy": "LONG",
       "valueSell": "SHORT"
     },
@@ -95,7 +98,6 @@
       "name": "DoraQuant-BTC",
       "type": "raw",
       "enabled": true,
-      "allowedSymbols": "BTCUSDT",
       "skipSignals": 0,
       "expiresAt": 0,
       "apiUrl": "https://doraquant.xyz/webhook",
@@ -110,7 +112,6 @@
       "name": "DoraQuant-ETH",
       "type": "raw",
       "enabled": true,
-      "allowedSymbols": "ETHUSDT",
       "skipSignals": 0,
       "expiresAt": 0,
       "apiUrl": "https://doraquant.xyz/webhook",
@@ -123,8 +124,8 @@
   ],
   "strategies": [
     {
-      "id": "strategy-btc-5m",
-      "name": "strategy-btc-5m",
+      "id": "btc-5m-v1",
+      "name": "btc-5m-v1",
       "enabled": true,
       "groups": [
         {
@@ -165,8 +166,27 @@
       ]
     },
     {
-      "id": "strategy-eth-30m",
-      "name": "strategy-eth-30m",
+      "id": "btc-30m-v3",
+      "name": "btc-30m-v3",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-turboflow",
+          "name": "TurboFlow组",
+          "enabled": true,
+          "dispatch": "random",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eth-30m-v4",
+      "name": "eth-30m-v4",
       "enabled": true,
       "groups": [
         {
