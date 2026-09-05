@@ -20,7 +20,7 @@
     {
       "id": "up-2e3s3c",
       "name": "btclocal",
-      "wsUrl": "ws://127.0.0.1:8083/ws/engine",
+      "wsUrl": "ws://127.0.0.1:8081/ws/engine",
       "wsKey": "",
       "enabled": true
     }
