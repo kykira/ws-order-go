@@ -329,7 +329,7 @@ func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfi
 	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, task.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
 	go func(t config.TaskConfig, req order.PlaceOrderRequest) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		if err := p.order.PlaceOrder(ctx, t, req); err != nil {
@@ -368,7 +368,7 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 	}
 
 	go func(t config.TaskConfig, r order.PlaceOrderRequest) {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		err := p.order.PlaceOrder(ctx, t, r)
@@ -402,7 +402,7 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 
 		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, amt, req.Unit))
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		err := p.order.PlaceOrder(ctx, task, r)
 		cancel()
 		if err == nil {

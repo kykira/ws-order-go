@@ -371,8 +371,14 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		return err
 	}
 
-	// Retry once on "Open order number has reached maximum limit" (93420018)
+	// Default retry once on "Open order number has reached maximum limit" (93420018).
+	// TurboFlow 1021110 means the same account is being submitted too frequently;
+	// when multiple different strategies fire at the same second, retry more times
+	// with exponential backoff 1s/2s/4s/8s so every signal eventually gets through.
 	maxRetries := 2
+	if task.Type == "turboflow" {
+		maxRetries = 5 // initial + retries after 1s/2s/4s/8s
+	}
 	sawRetryable := false
 	var lastRespBody []byte
 	var lastStatusCode int

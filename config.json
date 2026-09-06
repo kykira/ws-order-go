@@ -156,7 +156,7 @@
             },
             {
               "accountId": "acct-r8t3cn",
-              "amount": "15"
+              "amount": "9"
             }
           ]
         }
@@ -176,6 +176,10 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
+            },
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "9"
             }
           ]
         }
@@ -195,6 +199,10 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
+            },
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "9"
             }
           ]
         }
