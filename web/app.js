@@ -57,7 +57,53 @@ function setChk(id,v) { const e=$(id); if(e)e.checked=!!v; }
 
 // ── Init ──
 
-function initConfig() { loadConfig().catch(console.error); updateWSStatus(); setInterval(updateWSStatus, 3000); }
+function initConfig() { loadConfig().catch(console.error); updateWSStatus(); setInterval(updateWSStatus, 3000); setInterval(() => { loadBalances().catch(console.error); loadSummary().catch(console.error); }, 10000); }
+
+async function loadSummary() {
+  const s = await apiGet("/api/balances/summary");
+  const totalEl = $("summary-total");
+  if (totalEl) totalEl.textContent = s.total ? `${s.total} USDT` : "--";
+  const countEl = $("summary-account-count");
+  if (countEl) countEl.textContent = `${s.accountCount || 0} 个币安账号`;
+
+  const listEl = $("summary-daily-list");
+  if (!listEl) return;
+  const days = Array.isArray(s.recentDays) ? s.recentDays : [];
+  if (!days.length) {
+    listEl.innerHTML = '<div class="text-xs text-gray-400">等待 12 点记录基准</div>';
+    return;
+  }
+  listEl.innerHTML = days.map(d => {
+    const profit = parseFloat(d.profit) || 0;
+    const isPos = profit >= 0;
+    const badge = isPos
+      ? "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100"
+      : "bg-red-50 text-red-500 ring-1 ring-red-100";
+    const sign = isPos ? "+" : "";
+    return `<div class="flex items-center justify-between rounded-lg bg-gray-50/80 px-3 py-2">
+      <span class="text-xs font-medium text-gray-600">${d.date}</span>
+      <span class="text-[10px] text-gray-400">基准 ${d.baseline}</span>
+      <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${badge}">${sign}${d.profit}</span>
+    </div>`;
+  }).join("");
+}
+
+async function loadBalances() {
+  const data = await apiGet("/api/balances");
+  for (const [taskId, info] of Object.entries(data || {})) {
+    const el = document.getElementById(`balance-${taskId}`);
+    if (!el) continue;
+    if (info.error) {
+      el.textContent = "余额 ⚠️";
+      el.title = info.error;
+      el.className = "text-[10px] px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200";
+      continue;
+    }
+    el.textContent = `总 ${info.total || "0.00"}`;
+    el.title = `总 ${info.total || "0.00"} · 更新 ${new Date(info.updatedAt).toLocaleTimeString()}`;
+    el.className = "text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200";
+  }
+}
 
 async function loadConfig() {
   const c = await apiGet("/api/config");
@@ -77,6 +123,8 @@ async function loadConfig() {
   renderTasks(stateTasks);
   stateStrategies = normalizeStrategies(c);
   renderStrategies(stateStrategies);
+  loadBalances().catch(console.error);
+  loadSummary().catch(console.error);
 }
 
 function initActions() {
@@ -253,6 +301,7 @@ function card(t, idx) {
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
         <input class="border rounded px-2 py-1 text-xs font-semibold w-28" data-field="name" value="${esc(t.name)}" />
         ${platformBadge(t.type)}
+        ${t.type === "binance" ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
         <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>

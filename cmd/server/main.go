@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kykira/ws-order-go/internal/balance"
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
 	"github.com/kykira/ws-order-go/internal/order"
@@ -33,13 +34,18 @@ func main() {
 	processor := signals.NewProcessor(cfgManager, logger, orderClient)
 	wsMgr := wsclient.NewManager(cfgManager, logger, processor)
 	wsSrv := wsserver.NewServer(cfgManager, logger, processor)
+	balanceSvc := balance.NewService(cfgManager, logger)
 
 	// 同步上游配置并启动连接
 	wsMgr.Sync()
+	// 启动币安账号余额拉取（首次立即拉取，之后每分钟一次）
+	balanceSvc.Start()
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsMgr, wsSrv, orderClient))
+	mux.HandleFunc("/api/balances", handleBalances(balanceSvc))
+	mux.HandleFunc("/api/balances/summary", handleBalancesSummary(balanceSvc))
 	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsMgr))
 	mux.HandleFunc("/api/ws/disconnect", handleWSDisconnect(cfgManager, logger, wsMgr))
 	mux.HandleFunc("/api/ws/status", handleWSStatus(wsMgr, wsSrv))
@@ -148,6 +154,28 @@ func handleLogin(cfgMgr *config.Manager) http.HandlerFunc {
 			SameSite: http.SameSiteLaxMode,
 		})
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}
+}
+
+func handleBalances(svc *balance.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(svc.GetBalances())
+	}
+}
+
+func handleBalancesSummary(svc *balance.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(svc.Summary())
 	}
 }
 

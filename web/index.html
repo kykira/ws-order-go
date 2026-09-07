@@ -53,6 +53,25 @@
 
 <main class="flex-1 max-w-5xl mx-auto w-full px-4 py-4 space-y-4">
 
+  <!-- 资产总览 -->
+  <div class="grid gap-3 sm:grid-cols-3">
+    <div class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div class="flex items-center gap-1.5 text-[11px] font-medium text-gray-500">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+        账号总资产
+      </div>
+      <div id="summary-total" class="text-2xl font-bold text-gray-900 mt-2 tracking-tight">--</div>
+      <div id="summary-account-count" class="text-[10px] text-gray-400 mt-1">0 个币安账号</div>
+    </div>
+    <div class="sm:col-span-2 rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold text-gray-700">最近 5 日收益</span>
+        <span class="text-[10px] text-gray-400">基准为前一日 12 点余额</span>
+      </div>
+      <div id="summary-daily-list" class="space-y-1.5">--</div>
+    </div>
+  </div>
+
   <!-- Toolbar -->
   <div class="flex items-center justify-between gap-2 flex-wrap">
     <div class="flex items-center gap-2">
