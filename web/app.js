@@ -70,7 +70,7 @@ async function loadSummary() {
   if (!listEl) return;
   const days = Array.isArray(s.recentDays) ? s.recentDays : [];
   if (!days.length) {
-    listEl.innerHTML = '<div class="text-xs text-gray-400">等待 12 点记录基准</div>';
+    listEl.innerHTML = '<div class="text-xs text-gray-400">等待 24 点记录基准</div>';
     return;
   }
   listEl.innerHTML = days.map(d => {

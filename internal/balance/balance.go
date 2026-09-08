@@ -19,7 +19,7 @@ import (
 
 const balanceURL = "https://www.binance.com/bapi/asset/v2/private/asset-service/wallet/balance?quoteAsset=USDT&needBalanceDetail=true&needEuFuture=true&includeOption=true"
 
-// 每日 12 点快照按北京时间记录。
+// 每日 0 点（北京时间午夜）快照。
 var cnLocation = func() *time.Location {
 	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
 		return loc
@@ -47,10 +47,10 @@ type Summary struct {
 type DailyProfit struct {
 	Date     string `json:"date"`
 	Profit   string `json:"profit"`
-	Baseline string `json:"baseline"` // 收益基准：前一日12点快照，无记录时为 0.00
+	Baseline string `json:"baseline"` // 收益基准：前一日 0 点快照，无记录时为 0.00
 }
 
-// Snapshot 是某一天 12 点记录的资产快照。
+// Snapshot 是某一天 0 点记录的资产快照。
 type Snapshot struct {
 	Date       string `json:"date"`
 	Total      string `json:"total"`
@@ -130,7 +130,7 @@ func (s *Service) Summary() Summary {
 	}
 }
 
-// recentDailyProfits 根据 12 点快照差值计算最近几天收益。
+// recentDailyProfits 根据 0 点快照差值计算最近几天收益。
 // 每日收益 = 当日快照 - 前一日快照；没有记录时，收益基准为 0。
 func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 	s.snapshotMu.Lock()
@@ -177,13 +177,10 @@ func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 	return out
 }
 
-// recordDailySnapshotIfNeeded 在每天 12 点后首次拉取余额时，记录一次当天总资产快照。
-// 服务若在 12 点后才启动，也会在首次成功后补记一次，作为当天基准。
+// recordDailySnapshotIfNeeded 每天首次成功拉取余额后记录一次当天总资产快照。
+// 正常运行时即北京时间 0 点前后；服务当天晚启动时，则以首次成功拉取时的余额作为当天基准。
 func (s *Service) recordDailySnapshotIfNeeded(now time.Time) {
 	now = now.In(cnLocation)
-	if now.Hour() < 12 {
-		return
-	}
 	date := now.Format("2006-01-02")
 
 	s.snapshotMu.Lock()
