@@ -326,7 +326,7 @@ func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.Task
 }
 
 func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfig, action, amount, unit, period, matchedRange string) {
-	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, task.Name, action, sig.Symbol, amount, unit, period, matchedRange))
+	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, sig.Strategy, task.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
 	go func(t config.TaskConfig, req order.PlaceOrderRequest) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -342,6 +342,7 @@ func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfi
 		Symbol:     sig.Symbol,
 		TickerType: sig.TickerType,
 		Period:     period,
+		Strategy:   sig.Strategy,
 	})
 }
 
@@ -356,7 +357,7 @@ func isFallbackError(err error) bool {
 // login expired, banned, etc.), it automatically tries the other matched
 // executable accounts.
 func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary config.TaskConfig, matched []config.TaskConfig, action, amount, unit, period, matchedRange string, amountFor func(config.TaskConfig) string) {
-	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, primary.Name, action, sig.Symbol, amount, unit, period, matchedRange))
+	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, sig.Strategy, primary.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
 	req := order.PlaceOrderRequest{
 		Amount:     amount,
@@ -365,6 +366,7 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 		Symbol:     sig.Symbol,
 		TickerType: sig.TickerType,
 		Period:     period,
+		Strategy:   sig.Strategy,
 	}
 
 	go func(t config.TaskConfig, r order.PlaceOrderRequest) {
@@ -400,7 +402,7 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 		r := req
 		r.Amount = amt
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, task.Name, sig.Symbol, amt, req.Unit))
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, sig.Strategy, task.Name, sig.Symbol, amt, req.Unit))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		err := p.order.PlaceOrder(ctx, task, r)

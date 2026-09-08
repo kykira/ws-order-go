@@ -48,6 +48,7 @@ type PlaceOrderRequest struct {
 	Symbol     string
 	TickerType string
 	Period     string
+	Strategy   string
 	IsTest     bool
 }
 
@@ -362,8 +363,13 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		tag = "[TEST] "
 	}
 
-	c.logger.Info("order", fmt.Sprintf("%stask=[%s] START %s %s\nBody: %s",
-		tag, task.Name, method, urlStr, bodyStr))
+	strategyPart := ""
+	if req.Strategy != "" {
+		strategyPart = fmt.Sprintf(" strategy=[%s]", req.Strategy)
+	}
+
+	c.logger.Info("order", fmt.Sprintf("%stask=[%s]%s START %s %s\nBody: %s",
+		tag, task.Name, strategyPart, method, urlStr, bodyStr))
 
 	httpClient, err := c.httpClientForTask(task)
 	if err != nil {
@@ -412,7 +418,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		lastRespBody = respBody
 		lastStatusCode = resp.StatusCode
 
-		c.logger.Info("order", fmt.Sprintf("%stask=[%s] FINISH status=%d\nResponse: %s", tag, task.Name, resp.StatusCode, string(respBody)))
+		c.logger.Info("order", fmt.Sprintf("%stask=[%s]%s FINISH status=%d\nResponse: %s", tag, task.Name, strategyPart, resp.StatusCode, string(respBody)))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var bizResp bizResponse
