@@ -130,8 +130,9 @@ func (s *Service) Summary() Summary {
 	}
 }
 
-// recentDailyProfits 根据 0 点快照差值计算最近几天收益。
-// 每日收益 = 当日快照 - 前一日快照；没有记录时，收益基准为 0。
+// recentDailyProfits 计算最近几天收益。
+// 历史日 = 当日 0 点快照 - 前一日 0 点快照；
+// 当天 = 实时总资产 - 最近一次 0 点快照（即昨天 24 点记录下来的余额）。
 func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
@@ -152,24 +153,37 @@ func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 
 	out := make([]DailyProfit, 0, maxDays)
 
-	// 第一个快照日：收益基准为 0
-	first, _ := strconv.ParseFloat(snapshots[0].Total, 64)
-	out = append(out, DailyProfit{
-		Date:     snapshots[0].Date,
-		Profit:   strconv.FormatFloat(first, 'f', 2, 64),
-		Baseline: "0.00",
-	})
-
-	// 后续快照日：当日快照 - 前一日快照
-	for i := 1; i < len(snapshots); i++ {
+	// 今天以前的历史快照日
+	for i, snap := range snapshots {
+		if snap.Date >= today {
+			break
+		}
+		if i == 0 {
+			first, _ := strconv.ParseFloat(snap.Total, 64)
+			out = append(out, DailyProfit{
+				Date:     snap.Date,
+				Profit:   strconv.FormatFloat(first, 'f', 2, 64),
+				Baseline: "0.00",
+			})
+			continue
+		}
 		prev, _ := strconv.ParseFloat(snapshots[i-1].Total, 64)
-		curr, _ := strconv.ParseFloat(snapshots[i].Total, 64)
+		curr, _ := strconv.ParseFloat(snap.Total, 64)
 		out = append(out, DailyProfit{
-			Date:     snapshots[i].Date,
+			Date:     snap.Date,
 			Profit:   strconv.FormatFloat(curr-prev, 'f', 2, 64),
 			Baseline: snapshots[i-1].Total,
 		})
 	}
+
+	// 当天：实时总资产 - 最近一次 0 点快照（昨天 24 点余额）
+	last := snapshots[len(snapshots)-1]
+	lastTotal, _ := strconv.ParseFloat(last.Total, 64)
+	out = append(out, DailyProfit{
+		Date:     today,
+		Profit:   strconv.FormatFloat(currentTotal-lastTotal, 'f', 2, 64),
+		Baseline: last.Total,
+	})
 
 	if len(out) > maxDays {
 		out = out[len(out)-maxDays:]
@@ -177,10 +191,13 @@ func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 	return out
 }
 
-// recordDailySnapshotIfNeeded 每天首次成功拉取余额后记录一次当天总资产快照。
-// 正常运行时即北京时间 0 点前后；服务当天晚启动时，则以首次成功拉取时的余额作为当天基准。
+// recordDailySnapshotIfNeeded 只在北京时间 0 点记录当天总资产快照。
+// 服务当天晚启动时不补记，当天收益会使用最近一次快照（通常是昨天 24 点余额）作为基准。
 func (s *Service) recordDailySnapshotIfNeeded(now time.Time) {
 	now = now.In(cnLocation)
+	if now.Hour() != 0 {
+		return
+	}
 	date := now.Format("2006-01-02")
 
 	s.snapshotMu.Lock()
