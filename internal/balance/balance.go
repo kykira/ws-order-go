@@ -130,9 +130,9 @@ func (s *Service) Summary() Summary {
 	}
 }
 
-// recentDailyProfits 计算最近几天收益。
-// 历史日 = 当日 0 点快照 - 前一日 0 点快照；
-// 当天 = 实时总资产 - 最近一次 0 点快照（即昨天 24 点记录下来的余额）。
+// recentDailyProfits 计算最近几天收益，按“起始日”归属：
+// 某日收益 = 次日 0 点快照 - 当日 0 点快照；
+// 当天 = 实时总资产 - 当天 0 点快照（昨天 24 点记录下来的余额）。
 func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 	s.snapshotMu.Lock()
 	defer s.snapshotMu.Unlock()
@@ -153,30 +153,18 @@ func (s *Service) recentDailyProfits(currentTotal float64) []DailyProfit {
 
 	out := make([]DailyProfit, 0, maxDays)
 
-	// 今天以前的历史快照日
-	for i, snap := range snapshots {
-		if snap.Date >= today {
-			break
-		}
-		if i == 0 {
-			first, _ := strconv.ParseFloat(snap.Total, 64)
-			out = append(out, DailyProfit{
-				Date:     snap.Date,
-				Profit:   strconv.FormatFloat(first, 'f', 2, 64),
-				Baseline: "0.00",
-			})
-			continue
-		}
-		prev, _ := strconv.ParseFloat(snapshots[i-1].Total, 64)
-		curr, _ := strconv.ParseFloat(snap.Total, 64)
+	// 每个快照日 = 次日 0 点快照 - 当日 0 点快照
+	for i := 0; i < len(snapshots)-1; i++ {
+		curr, _ := strconv.ParseFloat(snapshots[i].Total, 64)
+		next, _ := strconv.ParseFloat(snapshots[i+1].Total, 64)
 		out = append(out, DailyProfit{
-			Date:     snap.Date,
-			Profit:   strconv.FormatFloat(curr-prev, 'f', 2, 64),
-			Baseline: snapshots[i-1].Total,
+			Date:     snapshots[i].Date,
+			Profit:   strconv.FormatFloat(next-curr, 'f', 2, 64),
+			Baseline: snapshots[i].Total,
 		})
 	}
 
-	// 当天：实时总资产 - 最近一次 0 点快照（昨天 24 点余额）
+	// 当天：实时总资产 - 最近一次 0 点快照
 	last := snapshots[len(snapshots)-1]
 	lastTotal, _ := strconv.ParseFloat(last.Total, 64)
 	out = append(out, DailyProfit{
