@@ -22,7 +22,7 @@
       "name": "btclocal",
       "wsUrl": "ws://127.0.0.1:8081/ws/engine",
       "wsKey": "",
-      "enabled": true
+      "enabled": false
     }
   ],
   "wsServer": {
@@ -92,20 +92,6 @@
       "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"VEIOU98Y\",\"tf\":\"{{period}}\"}",
       "valueBuy": "long",
       "valueSell": "short"
-    },
-    {
-      "id": "dq-eth",
-      "name": "DoraQuant-ETH",
-      "type": "raw",
-      "enabled": false,
-      "skipSignals": 0,
-      "expiresAt": 0,
-      "apiUrl": "https://doraquant.xyz/webhook",
-      "method": "POST",
-      "headers": "content-type: application/json",
-      "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"2FP5TALL\",\"tf\":\"{{period}}\"}",
-      "valueBuy": "long",
-      "valueSell": "short"
     }
   ],
   "strategies": [
@@ -118,18 +104,22 @@
           "id": "grp-turboflow",
           "name": "TurboFlow组",
           "enabled": true,
-          "dispatch": "random",
+          "dispatch": "all",
           "accounts": [
             {
               "accountId": "tf-pair6",
               "amount": "2"
+            },
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "3"
             }
           ]
         },
         {
           "id": "grp-dq",
           "name": "DoraQuant组",
-          "enabled": true,
+          "enabled": false,
           "dispatch": "all",
           "accounts": [
             {
@@ -153,18 +143,14 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
-            },
-            {
-              "accountId": "acct-r8t3cn",
-              "amount": "9"
             }
           ]
         }
       ]
     },
     {
-      "id": "btc-30m-v3",
-      "name": "btc-30m-v3",
+      "id": "btc-30m-v5",
+      "name": "btc-30m-v5",
       "enabled": true,
       "groups": [
         {
@@ -176,10 +162,6 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
-            },
-            {
-              "accountId": "acct-r8t3cn",
-              "amount": "9"
             }
           ]
         }
@@ -199,10 +181,25 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
-            },
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "btc-30m-v1",
+      "name": "btc-30m-v1",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-2pko87",
+          "name": "v1btc",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": [
             {
-              "accountId": "acct-r8t3cn",
-              "amount": "9"
+              "accountId": "tf-pair6",
+              "amount": "2"
             }
           ]
         }

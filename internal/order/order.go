@@ -102,13 +102,38 @@ func periodToMinutes(period string) string {
 	}
 }
 
+// flexString accepts either a JSON string or number for fields that some
+// platforms return inconsistently (e.g. Binance code="000000" vs HiBT code=500).
+type flexString string
+
+func (f *flexString) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" {
+		*f = ""
+		return nil
+	}
+	if s[0] == '"' {
+		var v string
+		if err := json.Unmarshal(data, &v); err != nil {
+			return err
+		}
+		*f = flexString(v)
+		return nil
+	}
+	*f = flexString(s)
+	return nil
+}
+
+func (f flexString) String() string { return string(f) }
+
 // bizResponse covers both Binance-style responses and common third-party
 // success formats such as {"errno":"200","msg":"success"}.
 type bizResponse struct {
-	Code    string `json:"code"`
-	Success bool   `json:"success"`
-	Errno   string `json:"errno"`
-	Msg     string `json:"msg"`
+	Code    flexString `json:"code"`
+	Success bool       `json:"success"`
+	Errno   string     `json:"errno"`
+	Msg     string     `json:"msg"`
+	Message string     `json:"message"`
 }
 
 func (b bizResponse) isSuccess() bool {
@@ -119,6 +144,15 @@ func (b bizResponse) isSuccess() bool {
 		return true
 	}
 	return false
+}
+
+// isHIBTHoldingLimit reports whether HiBT rejected the order because the
+// current symbol/period already has the maximum allowed open positions.
+func isHIBTHoldingLimit(b bizResponse) bool {
+	msg := strings.ToLower(strings.TrimSpace(b.Message))
+	return strings.Contains(msg, "最多允许持有") ||
+		strings.Contains(msg, "持仓数量限制") ||
+		strings.Contains(msg, "holding limit")
 }
 
 // ClearCache removes all cached HTTP clients, forcing them to be recreated.
@@ -377,20 +411,19 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		return err
 	}
 
-	// Default retry once on "Open order number has reached maximum limit" (93420018).
-	// TurboFlow 1021110 means the same account is being submitted too frequently;
-	// when multiple different strategies fire at the same second, retry more times
-	// with exponential backoff 1s/2s/4s/8s so every signal eventually gets through.
-	maxRetries := 2
-	if task.Type == "turboflow" {
-		maxRetries = 5 // initial + retries after 1s/2s/4s/8s
-	}
+	// Retryable business errors:
+	// - Binance 93420018 (open-order limit reached)
+	// - TurboFlow 1021110 (same account submitted too frequently)
+	// - HiBT holding-limit (max open orders for the current symbol/period)
+	// All retryable errors use a fixed 1s interval and 4 retries so concurrent
+	// signals from different strategies eventually get placed.
+	maxRetries := 5 // initial + 4 retries
 	sawRetryable := false
 	var lastRespBody []byte
 	var lastStatusCode int
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			delay := time.Duration(1<<uint(attempt-1)) * time.Second // 1s, 2s, 4s, 8s
+			delay := time.Second
 			c.logger.Info("order", fmt.Sprintf("%stask=[%s] retry %d/%d after %v", tag, task.Name, attempt, maxRetries-1, delay))
 			select {
 			case <-ctx.Done():
@@ -423,7 +456,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var bizResp bizResponse
 			if json.Unmarshal(respBody, &bizResp) == nil {
-				if bizResp.Code == "93420018" || bizResp.Errno == "1021110" {
+				if bizResp.Code == "93420018" || bizResp.Errno == "1021110" || (task.Type == "hibt" && isHIBTHoldingLimit(bizResp)) {
 					sawRetryable = true
 					c.logger.Info("order", fmt.Sprintf("%stask=[%s] retryable error code=%s errno=%s, will retry", tag, task.Name, bizResp.Code, bizResp.Errno))
 					continue
@@ -431,21 +464,21 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 				if bizResp.isSuccess() {
 					return nil
 				}
-				if isAccountUnavailableCode(bizResp.Code) {
+				if isAccountUnavailableCode(string(bizResp.Code)) {
 					c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s (account unavailable/expired)", tag, task.Name, bizResp.Code))
-					return fmt.Errorf("%w: binance error code=%s", ErrAccountUnavailable, bizResp.Code)
+					return fmt.Errorf("%w: binance error code=%s", ErrAccountUnavailable, string(bizResp.Code))
 				}
 				// Other business error — don't retry
-				c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s", tag, task.Name, bizResp.Code))
-				return fmt.Errorf("binance error code=%s", bizResp.Code)
+				c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s", tag, task.Name, string(bizResp.Code)))
+				return fmt.Errorf("binance error code=%s", string(bizResp.Code))
 			}
 			return nil
 		}
 
 		var bizResp bizResponse
-		if json.Unmarshal(respBody, &bizResp) == nil && isAccountUnavailableCode(bizResp.Code) {
-			c.logger.Error("order", fmt.Sprintf("%stask=[%s] account unavailable/expired status=%d code=%s", tag, task.Name, resp.StatusCode, bizResp.Code))
-			return fmt.Errorf("%w: status=%d binance error code=%s", ErrAccountUnavailable, resp.StatusCode, bizResp.Code)
+		if json.Unmarshal(respBody, &bizResp) == nil && isAccountUnavailableCode(string(bizResp.Code)) {
+			c.logger.Error("order", fmt.Sprintf("%stask=[%s] account unavailable/expired status=%d code=%s", tag, task.Name, resp.StatusCode, string(bizResp.Code)))
+			return fmt.Errorf("%w: status=%d binance error code=%s", ErrAccountUnavailable, resp.StatusCode, string(bizResp.Code))
 		}
 
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
