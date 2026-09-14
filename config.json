@@ -98,7 +98,7 @@
     {
       "id": "btc-5m-v1",
       "name": "btc-5m-v1",
-      "enabled": true,
+      "enabled": false,
       "groups": [
         {
           "id": "grp-turboflow",
@@ -109,30 +109,22 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
-            },
-            {
-              "accountId": "acct-r8t3cn",
-              "amount": "3"
             }
           ]
         },
         {
           "id": "grp-dq",
           "name": "DoraQuant组",
-          "enabled": false,
+          "enabled": true,
           "dispatch": "all",
-          "accounts": [
-            {
-              "accountId": "dq-btc"
-            }
-          ]
+          "accounts": []
         }
       ]
     },
     {
       "id": "eth-30m-v4",
       "name": "eth-30m-v4",
-      "enabled": true,
+      "enabled": false,
       "groups": [
         {
           "id": "grp-turboflow",
@@ -189,7 +181,7 @@
     {
       "id": "btc-30m-v1",
       "name": "btc-30m-v1",
-      "enabled": true,
+      "enabled": false,
       "groups": [
         {
           "id": "grp-2pko87",
@@ -202,6 +194,32 @@
               "amount": "2"
             }
           ]
+        }
+      ]
+    },
+    {
+      "id": "btc-5m-v2",
+      "name": "btc-5m-v2",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-turboflow",
+          "name": "TurboFlow组",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            }
+          ]
+        },
+        {
+          "id": "grp-dq",
+          "name": "DoraQuant组",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": []
         }
       ]
     }
