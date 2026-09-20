@@ -68,18 +68,50 @@ func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.C
 // non-Binance accounts and unknown balances keep weight 1.
 func (p *Processor) weightsForTasks(tasks []config.TaskConfig) []float64 {
 	weights := make([]float64, len(tasks))
-	var balances map[string]float64
-	if p.balanceProvider != nil {
-		balances = p.balanceProvider.GetFuturesBalances()
-	}
-	for i, task := range tasks {
+	for i := range weights {
 		weights[i] = 1
+	}
+
+	if p.balanceProvider == nil {
+		return weights
+	}
+	balances := p.balanceProvider.GetFuturesBalances()
+
+	// Compute the average balance only across matched Binance accounts with
+	// valid balances, then use it as the target for inverse-balance weighting.
+	target, valid := 0.0, 0
+	for _, task := range tasks {
 		if task.Type != "binance" {
 			continue
 		}
 		if bal, ok := balances[task.ID]; ok && bal > 0 {
-			weights[i] = 1.0 / (bal + 1.0)
+			target += bal
+			valid++
 		}
+	}
+	if valid == 0 || target <= 0 {
+		return weights
+	}
+	target /= float64(valid)
+
+	// weight = 1 + 2 * clamp((target-balance)/target, 0, 1)
+	// so the strongest/weakest weight ratio is at most 3:1.
+	for i, task := range tasks {
+		if task.Type != "binance" {
+			continue
+		}
+		bal, ok := balances[task.ID]
+		if !ok || bal <= 0 {
+			continue
+		}
+		ratio := (target - bal) / target
+		if ratio < 0 {
+			ratio = 0
+		}
+		if ratio > 1 {
+			ratio = 1
+		}
+		weights[i] = 1 + 2*ratio
 	}
 	return weights
 }

@@ -199,8 +199,18 @@ func TestBinanceBalanceWeights(t *testing.T) {
 	if weights[0] <= weights[1] {
 		t.Fatalf("lower balance should have higher weight: a1=%v a2=%v", weights[0], weights[1])
 	}
+	if weights[0]/weights[1] > 3 {
+		t.Fatalf("weight ratio exceeds 3:1: a1=%v a2=%v", weights[0], weights[1])
+	}
 	if weights[2] != 1 {
 		t.Fatalf("non-binance weight = %v, want 1", weights[2])
+	}
+
+	// Extreme gap: 1U vs 10000U must still cap at 3:1.
+	proc.balanceProvider = fakeBalanceProvider{"a1": 1, "a2": 10000}
+	weights = proc.weightsForTasks(tasks[:2])
+	if weights[0]/weights[1] > 3 || weights[0] <= weights[1] || weights[1] != 1 {
+		t.Fatalf("expected capped weights near 3/1 for extreme balance gap, got %v/%v", weights[0], weights[1])
 	}
 }
 
