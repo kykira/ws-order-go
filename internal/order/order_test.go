@@ -24,3 +24,30 @@ func TestBizResponseIsSuccess(t *testing.T) {
 		})
 	}
 }
+
+func TestPeriodConversion(t *testing.T) {
+	cases := []struct {
+		period string
+		sec    string
+		min    string
+	}{
+		{"1m", "60", "1"},
+		{"3m", "180", "3"},
+		{"5m", "300", "5"},
+		{"10m", "600", "10"},
+		{"15m", "900", "15"},
+		{"30m", "1800", "30"},
+		{"1h", "3600", "60"},
+		{"2h", "7200", "120"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.period, func(t *testing.T) {
+			if got := periodToSeconds(tc.period); got != tc.sec {
+				t.Fatalf("periodToSeconds(%q) = %q, want %q", tc.period, got, tc.sec)
+			}
+			if got := periodToMinutes(tc.period); got != tc.min {
+				t.Fatalf("periodToMinutes(%q) = %q, want %q", tc.period, got, tc.min)
+			}
+		})
+	}
+}

@@ -31,24 +31,95 @@ type Signal struct {
 	Period   string `json:"period,omitempty"`   // 时间周期，如 30m
 }
 
+// BalanceProvider supplies each account's futures balance for weighted random
+// dispatch. A nil provider means all accounts keep equal weight.
+type BalanceProvider interface {
+	GetFuturesBalances() map[string]float64
+}
+
 type Processor struct {
-	cfg    *config.Manager
-	logger *logs.Logger
-	order  *order.Client
+	cfg             *config.Manager
+	logger          *logs.Logger
+	order           *order.Client
+	balanceProvider BalanceProvider
 
 	mu            sync.Mutex
 	seenSkip      map[string]int
 	skipStartTime map[string]time.Time
 }
 
-func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client) *Processor {
-	return &Processor{
-		cfg:           cfg,
-		logger:        logger,
-		order:         orderClient,
-		seenSkip:      make(map[string]int),
-		skipStartTime: make(map[string]time.Time),
+func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client, balanceProviders ...BalanceProvider) *Processor {
+	var bp BalanceProvider
+	if len(balanceProviders) > 0 {
+		bp = balanceProviders[0]
 	}
+	return &Processor{
+		cfg:             cfg,
+		logger:          logger,
+		order:           orderClient,
+		balanceProvider: bp,
+		seenSkip:        make(map[string]int),
+		skipStartTime:   make(map[string]time.Time),
+	}
+}
+
+// weightsForTasks returns a random weight for every task. Binance accounts
+// with a lower futures balance get a higher weight (inverse balance weight);
+// non-Binance accounts and unknown balances keep weight 1.
+func (p *Processor) weightsForTasks(tasks []config.TaskConfig) []float64 {
+	weights := make([]float64, len(tasks))
+	var balances map[string]float64
+	if p.balanceProvider != nil {
+		balances = p.balanceProvider.GetFuturesBalances()
+	}
+	for i, task := range tasks {
+		weights[i] = 1
+		if task.Type != "binance" {
+			continue
+		}
+		if bal, ok := balances[task.ID]; ok && bal > 0 {
+			weights[i] = 1.0 / (bal + 1.0)
+		}
+	}
+	return weights
+}
+
+func weightedIndex(weights []float64) int {
+	if len(weights) == 0 {
+		return -1
+	}
+	total := 0.0
+	for _, w := range weights {
+		if w > 0 {
+			total += w
+		}
+	}
+	if total <= 0 {
+		return rand.Intn(len(weights))
+	}
+	r := rand.Float64() * total
+	for i, w := range weights {
+		if w <= 0 {
+			continue
+		}
+		r -= w
+		if r <= 0 {
+			return i
+		}
+	}
+	return len(weights) - 1
+}
+
+func (p *Processor) pickWeightedTask(matched []config.TaskConfig) config.TaskConfig {
+	return matched[weightedIndex(p.weightsForTasks(matched))]
+}
+
+func (p *Processor) pickWeightedGroupAccount(matched []groupAccountMatch) groupAccountMatch {
+	tasks := make([]config.TaskConfig, len(matched))
+	for i, m := range matched {
+		tasks[i] = m.task
+	}
+	return matched[weightedIndex(p.weightsForTasks(tasks))]
 }
 
 // Stop is kept for API compatibility. There is no background slot loop anymore.
@@ -134,7 +205,7 @@ func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.T
 		return
 	}
 
-	task := matched[rand.Intn(len(matched))]
+	task := p.pickWeightedTask(matched)
 	p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, sig.Period, matchedRange, nil)
 	p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
 }
@@ -319,7 +390,7 @@ func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.Task
 		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
 
 	default: // random
-		m := matched[rand.Intn(len(matched))]
+		m := p.pickWeightedGroupAccount(matched)
 		p.logger.Info("signal", fmt.Sprintf("dispatch=group random strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
 		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
 	}

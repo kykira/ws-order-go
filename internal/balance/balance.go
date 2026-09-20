@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -104,6 +105,29 @@ func (s *Service) GetBalances() map[string]Info {
 	out := make(map[string]Info, len(s.balances))
 	for k, v := range s.balances {
 		out[k] = v
+	}
+	return out
+}
+
+// GetFuturesBalances 返回每个币安账号的 U 本位合约余额，供随机权重使用。
+// 优先使用 Futures；若 Futures 为 0/解析失败，则退回 Total。
+func (s *Service) GetFuturesBalances() map[string]float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]float64, len(s.balances))
+	for id, info := range s.balances {
+		if info.Error != "" {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(info.Futures), 64)
+		if err != nil || v <= 0 {
+			v, _ = strconv.ParseFloat(strings.TrimSpace(info.Total), 64)
+		}
+		if v < 0 {
+			v = 0
+		}
+		out[id] = v
 	}
 	return out
 }

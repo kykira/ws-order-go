@@ -31,10 +31,10 @@ func main() {
 	logger.Info("main", "starting ws-order bridge service")
 
 	orderClient := order.NewClient(logger)
-	processor := signals.NewProcessor(cfgManager, logger, orderClient)
+	balanceSvc := balance.NewService(cfgManager, logger)
+	processor := signals.NewProcessor(cfgManager, logger, orderClient, balanceSvc)
 	wsMgr := wsclient.NewManager(cfgManager, logger, processor)
 	wsSrv := wsserver.NewServer(cfgManager, logger, processor)
-	balanceSvc := balance.NewService(cfgManager, logger)
 
 	// 同步上游配置并启动连接
 	wsMgr.Sync()

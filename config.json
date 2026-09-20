@@ -22,7 +22,7 @@
       "name": "btclocal",
       "wsUrl": "ws://127.0.0.1:8081/ws/engine",
       "wsKey": "",
-      "enabled": false
+      "enabled": true
     }
   ],
   "wsServer": {
@@ -81,9 +81,9 @@
     },
     {
       "id": "dq-btc",
-      "name": "DoraQuant-BTC",
+      "name": "Dora-BTC-5m",
       "type": "raw",
-      "enabled": true,
+      "enabled": false,
       "skipSignals": 0,
       "expiresAt": 0,
       "apiUrl": "https://doraquant.xyz/webhook",
@@ -92,13 +92,41 @@
       "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"VEIOU98Y\",\"tf\":\"{{period}}\"}",
       "valueBuy": "long",
       "valueSell": "short"
+    },
+    {
+      "id": "acct-vei97q",
+      "name": "Do-B5-10-15m",
+      "type": "raw",
+      "enabled": true,
+      "skipSignals": 0,
+      "expiresAt": 0,
+      "apiUrl": "https://doraquant.xyz/webhook",
+      "method": "POST",
+      "headers": "content-type: application/json",
+      "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"CTJO5RWE\",\"tf\":\"{{period}}\"}",
+      "valueBuy": "long",
+      "valueSell": "short"
+    },
+    {
+      "id": "acct-wn7feh",
+      "name": "Dora-BTC-30m",
+      "type": "raw",
+      "enabled": true,
+      "skipSignals": 0,
+      "expiresAt": 0,
+      "apiUrl": "https://doraquant.xyz/webhook",
+      "method": "POST",
+      "headers": "content-type: application/json",
+      "body": "{\"side\":\"{{action}}\",\"symbol\":\"{{symbol}}\",\"source\":\"HH8MC28R\",\"tf\":\"{{period}}\"}",
+      "valueBuy": "long",
+      "valueSell": "short"
     }
   ],
   "strategies": [
     {
-      "id": "btc-5m-v1",
-      "name": "btc-5m-v1",
-      "enabled": false,
+      "id": "btc-5m-v2",
+      "name": "btc-5m-v2",
+      "enabled": true,
       "groups": [
         {
           "id": "grp-turboflow",
@@ -109,32 +137,13 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
-            }
-          ]
-        },
-        {
-          "id": "grp-dq",
-          "name": "DoraQuant组",
-          "enabled": true,
-          "dispatch": "all",
-          "accounts": []
-        }
-      ]
-    },
-    {
-      "id": "eth-30m-v4",
-      "name": "eth-30m-v4",
-      "enabled": false,
-      "groups": [
-        {
-          "id": "grp-turboflow",
-          "name": "TurboFlow组",
-          "enabled": true,
-          "dispatch": "all",
-          "accounts": [
+            },
             {
-              "accountId": "tf-pair6",
-              "amount": "2"
+              "accountId": "acct-r8t3cn",
+              "amount": "3"
+            },
+            {
+              "accountId": "acct-vei97q"
             }
           ]
         }
@@ -154,6 +163,9 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
+            },
+            {
+              "accountId": "acct-wn7feh"
             }
           ]
         }
@@ -181,7 +193,7 @@
     {
       "id": "btc-30m-v1",
       "name": "btc-30m-v1",
-      "enabled": false,
+      "enabled": true,
       "groups": [
         {
           "id": "grp-2pko87",
@@ -198,13 +210,65 @@
       ]
     },
     {
-      "id": "btc-5m-v2",
-      "name": "btc-5m-v2",
+      "id": "btc-10m-v1",
+      "name": "btc-10m-v1",
       "enabled": true,
       "groups": [
         {
-          "id": "grp-turboflow",
-          "name": "TurboFlow组",
+          "id": "grp-qsm000",
+          "name": "btc-10m-v1",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            },
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "3"
+            },
+            {
+              "accountId": "acct-vei97q"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "btc-15m-v1",
+      "name": "btc-15m-v1",
+      "enabled": true,
+      "groups": [
+        {
+          "id": "grp-7fobt6",
+          "name": "btc-15m-v1",
+          "enabled": true,
+          "dispatch": "all",
+          "accounts": [
+            {
+              "accountId": "tf-pair6",
+              "amount": "2"
+            },
+            {
+              "accountId": "acct-r8t3cn",
+              "amount": "3"
+            },
+            {
+              "accountId": "acct-vei97q"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eth-30m-v6",
+      "name": "eth-30m-v6",
+      "enabled": false,
+      "groups": [
+        {
+          "id": "grp-lbug9d",
+          "name": "eth-30m-v6",
           "enabled": true,
           "dispatch": "all",
           "accounts": [
@@ -213,13 +277,6 @@
               "amount": "2"
             }
           ]
-        },
-        {
-          "id": "grp-dq",
-          "name": "DoraQuant组",
-          "enabled": true,
-          "dispatch": "all",
-          "accounts": []
         }
       ]
     }

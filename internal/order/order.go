@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,54 +53,71 @@ type PlaceOrderRequest struct {
 	IsTest     bool
 }
 
+func parsePeriodUnit(period string) (value int, unit byte, ok bool) {
+	p := strings.ToLower(strings.TrimSpace(period))
+	if p == "" {
+		return 0, 0, false
+	}
+	i := 0
+	for i < len(p) && p[i] >= '0' && p[i] <= '9' {
+		i++
+	}
+	if i == 0 || i == len(p) {
+		return 0, 0, false
+	}
+	n, err := strconv.Atoi(p[:i])
+	if err != nil {
+		return 0, 0, false
+	}
+	unitStr := strings.TrimSpace(p[i:])
+	switch unitStr {
+	case "s", "sec", "secs", "second", "seconds":
+		return n, 's', true
+	case "m", "min", "mins", "minute", "minutes":
+		return n, 'm', true
+	case "h", "hr", "hrs", "hour", "hours":
+		return n, 'h', true
+	default:
+		return 0, 0, false
+	}
+}
+
 func periodToSeconds(period string) string {
-	switch strings.ToLower(strings.TrimSpace(period)) {
+	p := strings.ToLower(strings.TrimSpace(period))
+	switch p {
 	case "30s":
 		return "30"
 	case "45s":
 		return "45"
-	case "1m":
-		return "60"
-	case "3m":
-		return "180"
-	case "5m":
-		return "300"
-	case "15m":
-		return "900"
-	case "30m":
-		return "1800"
-	case "1h":
-		return "3600"
-	case "2h":
-		return "7200"
-	case "4h":
-		return "14400"
-	default:
-		return strings.TrimSpace(period)
 	}
+	if n, unit, ok := parsePeriodUnit(p); ok {
+		switch unit {
+		case 's':
+			return strconv.Itoa(n)
+		case 'm':
+			return strconv.Itoa(n * 60)
+		case 'h':
+			return strconv.Itoa(n * 3600)
+		}
+	}
+	return strings.TrimSpace(period)
 }
 
 func periodToMinutes(period string) string {
-	switch strings.ToLower(strings.TrimSpace(period)) {
-	case "1m":
-		return "1"
-	case "3m":
-		return "3"
-	case "5m":
-		return "5"
-	case "15m":
-		return "15"
-	case "30m":
-		return "30"
-	case "1h":
-		return "60"
-	case "2h":
-		return "120"
-	case "4h":
-		return "240"
-	default:
-		return strings.TrimSpace(period)
+	p := strings.ToLower(strings.TrimSpace(period))
+	if n, unit, ok := parsePeriodUnit(p); ok {
+		switch unit {
+		case 'm':
+			return strconv.Itoa(n)
+		case 'h':
+			return strconv.Itoa(n * 60)
+		case 's':
+			if n%60 == 0 {
+				return strconv.Itoa(n / 60)
+			}
+		}
 	}
+	return strings.TrimSpace(period)
 }
 
 // flexString accepts either a JSON string or number for fields that some
@@ -131,13 +149,14 @@ func (f flexString) String() string { return string(f) }
 type bizResponse struct {
 	Code    flexString `json:"code"`
 	Success bool       `json:"success"`
+	Ok      bool       `json:"ok"`
 	Errno   string     `json:"errno"`
 	Msg     string     `json:"msg"`
 	Message string     `json:"message"`
 }
 
 func (b bizResponse) isSuccess() bool {
-	if b.Code == "000000" || b.Success {
+	if b.Code == "000000" || b.Success || b.Ok {
 		return true
 	}
 	if b.Errno == "200" || strings.EqualFold(strings.TrimSpace(b.Msg), "success") {
@@ -153,6 +172,15 @@ func isHIBTHoldingLimit(b bizResponse) bool {
 	return strings.Contains(msg, "最多允许持有") ||
 		strings.Contains(msg, "持仓数量限制") ||
 		strings.Contains(msg, "holding limit")
+}
+
+// isHIBTDuplicateOperation reports whether HiBT rejected the order because
+// the account already submitted a similar request too recently.
+func isHIBTDuplicateOperation(b bizResponse) bool {
+	msg := strings.ToLower(strings.TrimSpace(b.Message))
+	return strings.Contains(msg, "请勿重复操作") ||
+		strings.Contains(msg, "重复操作") ||
+		strings.Contains(msg, "duplicate operation")
 }
 
 // ClearCache removes all cached HTTP clients, forcing them to be recreated.
@@ -415,9 +443,10 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	// - Binance 93420018 (open-order limit reached)
 	// - TurboFlow 1021110 (same account submitted too frequently)
 	// - HiBT holding-limit (max open orders for the current symbol/period)
-	// All retryable errors use a fixed 1s interval and 4 retries so concurrent
+	// - HiBT duplicate-operation (same account requested too soon)
+	// All retryable errors use a fixed 1s interval and 10 retries so concurrent
 	// signals from different strategies eventually get placed.
-	maxRetries := 5 // initial + 4 retries
+	maxRetries := 11 // initial + 10 retries
 	sawRetryable := false
 	var lastRespBody []byte
 	var lastStatusCode int
@@ -456,7 +485,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var bizResp bizResponse
 			if json.Unmarshal(respBody, &bizResp) == nil {
-				if bizResp.Code == "93420018" || bizResp.Errno == "1021110" || (task.Type == "hibt" && isHIBTHoldingLimit(bizResp)) {
+				if bizResp.Code == "93420018" || bizResp.Errno == "1021110" || (task.Type == "hibt" && (isHIBTHoldingLimit(bizResp) || isHIBTDuplicateOperation(bizResp))) {
 					sawRetryable = true
 					c.logger.Info("order", fmt.Sprintf("%stask=[%s] retryable error code=%s errno=%s, will retry", tag, task.Name, bizResp.Code, bizResp.Errno))
 					continue

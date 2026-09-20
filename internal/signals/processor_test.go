@@ -180,6 +180,30 @@ func TestStrategyGroupAllDispatch(t *testing.T) {
 	}
 }
 
+type fakeBalanceProvider map[string]float64
+
+func (f fakeBalanceProvider) GetFuturesBalances() map[string]float64 { return f }
+
+func TestBinanceBalanceWeights(t *testing.T) {
+	proc := &Processor{balanceProvider: fakeBalanceProvider{
+		"a1": 100,
+		"a2": 400,
+	}}
+	tasks := []config.TaskConfig{
+		{ID: "a1", Type: "binance"},
+		{ID: "a2", Type: "binance"},
+		{ID: "tf", Type: "turboflow"},
+	}
+
+	weights := proc.weightsForTasks(tasks)
+	if weights[0] <= weights[1] {
+		t.Fatalf("lower balance should have higher weight: a1=%v a2=%v", weights[0], weights[1])
+	}
+	if weights[2] != 1 {
+		t.Fatalf("non-binance weight = %v, want 1", weights[2])
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchStr(s, substr)
 }
