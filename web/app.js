@@ -118,7 +118,7 @@ async function loadConfig() {
   }));
   if (!stateUpstreams.length) stateUpstreams = [{ id:rid("up"), name:"", wsUrl:"", wsKey:"", enabled:false }];
   renderUpstreams(stateUpstreams);
-  const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
+  const sel = $("dispatchMode"); if (sel) sel.value = ["all","random","weighted"].includes(c.dispatch)?c.dispatch:"round-robin";
   stateTasks = normalizeTasks(c);
   renderTasks(stateTasks);
   stateStrategies = normalizeStrategies(c);
@@ -141,7 +141,7 @@ function initActions() {
       stateUpstreams = (c.upstreams||[]).map(u=>({id:u.id||rid("up"),name:u.name||"",wsUrl:u.wsUrl||"",wsKey:u.wsKey||"",enabled:!!u.enabled}));
       if (!stateUpstreams.length) stateUpstreams = [{id:rid("up"),name:"",wsUrl:"",wsKey:"",enabled:false}];
       renderUpstreams(stateUpstreams);
-      const sel = $("dispatchMode"); if (sel) sel.value = (c.dispatch==="all"||c.dispatch==="random")?c.dispatch:"round-robin";
+      const sel = $("dispatchMode"); if (sel) sel.value = ["all","random","weighted"].includes(c.dispatch)?c.dispatch:"round-robin";
       stateTasks = normalizeTasks(c); renderTasks(stateTasks);
       stateStrategies = normalizeStrategies(c); renderStrategies(stateStrategies);
       log("JSON 已导入");
@@ -460,7 +460,7 @@ function strategyCard(s, idx) {
 }
 
 function groupHtml(g) {
-  const opts = ["random","round-robin","all"].map(m=>`<option ${g.dispatch===m?"selected":""}>${m}</option>`).join("");
+  const opts = ["random","weighted","round-robin","all"].map(m=>`<option ${g.dispatch===m?"selected":""}>${m}</option>`).join("");
   const rows = stateTasks.length
     ? stateTasks.map(t=>{
         const binding = (g.accounts||[]).find(a => a.accountId === t.id) || { amount: "" };

@@ -95,12 +95,12 @@ type StrategyGroupAccountConfig struct {
 }
 
 // StrategyGroupConfig is a group of account bindings inside one strategy.
-// Dispatch: random | round-robin | all.
+// Dispatch: random | weighted | round-robin | all.
 type StrategyGroupConfig struct {
 	ID         string                       `json:"id"`
 	Name       string                       `json:"name"`
 	Enabled    bool                         `json:"enabled"`
-	Dispatch   string                       `json:"dispatch"` // random | round-robin | all
+	Dispatch   string                       `json:"dispatch"` // random | weighted | round-robin | all
 	Accounts   []StrategyGroupAccountConfig `json:"accounts"`
 	AccountIDs []string                     `json:"accountIds,omitempty"` // deprecated, kept for old configs
 }

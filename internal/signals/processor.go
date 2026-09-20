@@ -218,6 +218,10 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 		p.dispatchRandom(source, sig, matched, action, amount, unit, matchedRange)
 		return nil
 
+	case "weighted":
+		p.dispatchWeighted(source, sig, matched, action, amount, unit, matchedRange)
+		return nil
+
 	case "round-robin":
 		p.dispatchRoundRobin(source, sig, matched, action, amount, unit, matchedRange)
 		return nil
@@ -231,15 +235,27 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 	return nil
 }
 
-// dispatchRandom picks one matched account randomly.
+// dispatchRandom picks one matched account with equal probability.
 func (p *Processor) dispatchRandom(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
+	if len(matched) == 0 {
+		return
+	}
+
+	task := matched[rand.Intn(len(matched))]
+	p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, sig.Period, matchedRange, nil)
+	p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
+}
+
+// dispatchWeighted picks one matched account randomly, weighted by Binance
+// account balance (lower balance => higher weight, capped at 3:1).
+func (p *Processor) dispatchWeighted(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
 	if len(matched) == 0 {
 		return
 	}
 
 	task := p.pickWeightedTask(matched)
 	p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, sig.Period, matchedRange, nil)
-	p.logger.Info("signal", fmt.Sprintf("dispatch=random picked account=[%s]", task.Name))
+	p.logger.Info("signal", fmt.Sprintf("dispatch=weighted picked account=[%s]", task.Name))
 }
 
 // dispatchRoundRobin picks the first matched account in config order.
@@ -421,8 +437,13 @@ func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.Task
 		p.logger.Info("signal", fmt.Sprintf("dispatch=group round-robin strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
 		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
 
-	default: // random
+	case "weighted":
 		m := p.pickWeightedGroupAccount(matched)
+		p.logger.Info("signal", fmt.Sprintf("dispatch=group weighted strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
+		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
+
+	default: // random
+		m := matched[rand.Intn(len(matched))]
 		p.logger.Info("signal", fmt.Sprintf("dispatch=group random strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
 		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
 	}
