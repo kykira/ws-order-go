@@ -473,7 +473,9 @@ func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfi
 // isFallbackError reports whether an order error should trigger switching to
 // another executable account.
 func isFallbackError(err error) bool {
-	return errors.Is(err, order.ErrRetryExhausted) || errors.Is(err, order.ErrAccountUnavailable)
+	return errors.Is(err, order.ErrOrderLimitReached) ||
+		errors.Is(err, order.ErrRetryExhausted) ||
+		errors.Is(err, order.ErrAccountUnavailable)
 }
 
 // executeTaskWithFallback is used by single-account dispatch modes (random and
@@ -513,11 +515,29 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 }
 
 // tryFallbackOrder attempts the remaining matched accounts in config order.
+const maxFallbackOrderAttempts = 5
+
+// tryFallbackOrder attempts the remaining matched accounts in a loop. It starts
+// with the account after the one that just failed, and cycles through the
+// matched accounts until one succeeds or maxFallbackOrderAttempts is reached.
 func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config.TaskConfig, excludeID string, req order.PlaceOrderRequest, amountFor func(config.TaskConfig) string) {
-	for _, task := range matched {
+	if len(matched) == 0 {
+		return
+	}
+
+	start := 0
+	for i, task := range matched {
 		if task.ID == excludeID {
-			continue
+			start = i + 1
+			break
 		}
+	}
+	if start >= len(matched) {
+		start = 0
+	}
+
+	for attempt := 0; attempt < maxFallbackOrderAttempts; attempt++ {
+		task := matched[(start+attempt)%len(matched)]
 
 		amt := req.Amount
 		if amountFor != nil {
@@ -526,7 +546,7 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 		r := req
 		r.Amount = amt
 
-		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] fallback after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, sig.Strategy, task.Name, sig.Symbol, amt, req.Unit))
+		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] fallback attempt=%d/%d after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, sig.Strategy, task.Name, attempt+1, maxFallbackOrderAttempts, sig.Symbol, amt, req.Unit))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		err := p.order.PlaceOrder(ctx, task, r)
@@ -545,5 +565,5 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 		return
 	}
 
-	p.logger.Info("signal", "no available fallback account after order limit")
+	p.logger.Info("signal", fmt.Sprintf("no available fallback account after %d attempts", maxFallbackOrderAttempts))
 }

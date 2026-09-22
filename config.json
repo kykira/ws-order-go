@@ -204,6 +204,9 @@
             {
               "accountId": "tf-pair6",
               "amount": "2"
+            },
+            {
+              "accountId": "acct-wn7feh"
             }
           ]
         }
@@ -220,10 +223,6 @@
           "enabled": true,
           "dispatch": "all",
           "accounts": [
-            {
-              "accountId": "tf-pair6",
-              "amount": "2"
-            },
             {
               "accountId": "acct-r8t3cn",
               "amount": "3"
@@ -247,10 +246,6 @@
           "dispatch": "all",
           "accounts": [
             {
-              "accountId": "tf-pair6",
-              "amount": "2"
-            },
-            {
               "accountId": "acct-r8t3cn",
               "amount": "3"
             },
@@ -264,7 +259,7 @@
     {
       "id": "eth-30m-v6",
       "name": "eth-30m-v6",
-      "enabled": false,
+      "enabled": true,
       "groups": [
         {
           "id": "grp-lbug9d",

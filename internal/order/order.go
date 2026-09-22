@@ -21,9 +21,14 @@ import (
 )
 
 // ErrRetryExhausted indicates the exchange rejected the order with a retryable
-// error (e.g. Binance 93420018 open order limit, TurboFlow 1021110 order too
-// frequent) and all local retries were exhausted.
+// error (e.g. TurboFlow 1021110 order too frequent, HiBT holding limit) and all
+// local retries were exhausted.
 var ErrRetryExhausted = errors.New("retryable order error exhausted after retries")
+
+// ErrOrderLimitReached indicates the current account has reached the maximum
+// number of open orders. The processor should switch to another account instead
+// of retrying the same account many times.
+var ErrOrderLimitReached = errors.New("order number limit reached for this account")
 
 // ErrAccountUnavailable indicates the account itself is no longer usable,
 // e.g. login status expired (100002001) or banned (93420004).
@@ -440,12 +445,13 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	}
 
 	// Retryable business errors:
-	// - Binance 93420018 (open-order limit reached)
 	// - TurboFlow 1021110 (same account submitted too frequently)
 	// - HiBT holding-limit (max open orders for the current symbol/period)
 	// - HiBT duplicate-operation (same account requested too soon)
-	// All retryable errors use a fixed 1s interval and 10 retries so concurrent
-	// signals from different strategies eventually get placed.
+	// All of these use a fixed 1s interval and 10 retries so concurrent signals
+	// from different strategies eventually get placed.
+	// Binance 93420018 is different: retrying the same account is useless, so the
+	// processor should immediately fall back to another executable account.
 	maxRetries := 11 // initial + 10 retries
 	sawRetryable := false
 	var lastRespBody []byte
@@ -485,7 +491,11 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var bizResp bizResponse
 			if json.Unmarshal(respBody, &bizResp) == nil {
-				if bizResp.Code == "93420018" || bizResp.Errno == "1021110" || (task.Type == "hibt" && (isHIBTHoldingLimit(bizResp) || isHIBTDuplicateOperation(bizResp))) {
+				if bizResp.Code == "93420018" {
+					c.logger.Info("order", fmt.Sprintf("%stask=[%s] order-number limit reached, fallback to another account", tag, task.Name))
+					return fmt.Errorf("%w: binance error code=%s", ErrOrderLimitReached, string(bizResp.Code))
+				}
+				if bizResp.Errno == "1021110" || (task.Type == "hibt" && (isHIBTHoldingLimit(bizResp) || isHIBTDuplicateOperation(bizResp))) {
 					sawRetryable = true
 					c.logger.Info("order", fmt.Sprintf("%stask=[%s] retryable error code=%s errno=%s, will retry", tag, task.Name, bizResp.Code, bizResp.Errno))
 					continue
