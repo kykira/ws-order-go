@@ -20,6 +20,8 @@ import (
 
 const balanceURL = "https://www.binance.com/bapi/asset/v2/private/asset-service/wallet/balance?quoteAsset=USDT&needBalanceDetail=true&needEuFuture=true&includeOption=true"
 
+const turboflowAssetsURL = "https://apis.turboflow.xyz/account/assets/v2?fill_coin_sub_info=yes"
+
 // 每日 0 点（北京时间午夜）快照。
 var cnLocation = func() *time.Location {
 	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil {
@@ -28,9 +30,11 @@ var cnLocation = func() *time.Location {
 	return time.FixedZone("CST", 8*3600)
 }()
 
-// Info 是一个币安账号的余额快照。Total 是所有钱包账户的总和，
-// Futures 是 U 本位合约账户余额（币安事件合约下单使用的是 UM 钱包）。
+// Info 是一个交易账号的余额快照。对于币安，Total 是所有钱包账户的总和，
+// Futures 是 U 本位合约账户余额；对于 TurboFlow，Total/Futures 均为 USDT
+// 可用余额。余额快照用于页面展示和 weighted 随机权重。
 type Info struct {
+	Platform  string    `json:"platform,omitempty"`
 	Total     string    `json:"total"`
 	Futures   string    `json:"futures"`
 	UpdatedAt time.Time `json:"updatedAt"`
@@ -109,7 +113,7 @@ func (s *Service) GetBalances() map[string]Info {
 	return out
 }
 
-// GetFuturesBalances 返回每个币安账号的 U 本位合约余额，供随机权重使用。
+// GetFuturesBalances 返回可用于随机权重的账号余额。
 // 优先使用 Futures；若 Futures 为 0/解析失败，则退回 Total。
 func (s *Service) GetFuturesBalances() map[string]float64 {
 	s.mu.RLock()
@@ -139,6 +143,9 @@ func (s *Service) Summary() Summary {
 	accountCount := 0
 	for _, info := range s.balances {
 		if info.Error != "" {
+			continue
+		}
+		if info.Platform != "" && info.Platform != "binance" {
 			continue
 		}
 		t, _ := strconv.ParseFloat(info.Total, 64)
@@ -275,26 +282,41 @@ func (s *Service) saveSnapshotsLocked(snapshots []Snapshot) {
 	}
 }
 
-// FetchAll 拉取配置中所有币安类型账号的余额。
+// FetchAll 拉取配置中所有币安/TurboFlow 类型账号的余额。
 func (s *Service) FetchAll(ctx context.Context) {
 	cfg := s.cfgMgr.Get()
 	for _, task := range cfg.Tasks {
-		if task.Type != "binance" {
-			continue
+		switch task.Type {
+		case "binance":
+			csrf := task.Auth["csrftoken"]
+			p20t := task.Auth["p20t"]
+			if csrf == "" || p20t == "" {
+				s.set(task.ID, Info{Platform: "binance", Error: "missing csrftoken or p20t"})
+				continue
+			}
+			info, err := s.fetchBalance(ctx, csrf, p20t)
+			if err != nil {
+				s.logger.Error("balance", fmt.Sprintf("task=[%s] fetch balance error: %v", task.Name, err))
+				s.set(task.ID, Info{Platform: "binance", Error: err.Error()})
+				continue
+			}
+			info.Platform = "binance"
+			s.set(task.ID, info)
+
+		case "turboflow":
+			authorization := task.Auth["authorization"]
+			if strings.TrimSpace(authorization) == "" {
+				s.set(task.ID, Info{Platform: "turboflow", Error: "missing authorization"})
+				continue
+			}
+			info, err := s.fetchTurboFlowBalance(ctx, task)
+			if err != nil {
+				s.logger.Error("balance", fmt.Sprintf("task=[%s] fetch TurboFlow balance error: %v", task.Name, err))
+				s.set(task.ID, Info{Platform: "turboflow", Error: err.Error()})
+				continue
+			}
+			s.set(task.ID, info)
 		}
-		csrf := task.Auth["csrftoken"]
-		p20t := task.Auth["p20t"]
-		if csrf == "" || p20t == "" {
-			s.set(task.ID, Info{Error: "missing csrftoken or p20t"})
-			continue
-		}
-		info, err := s.fetchBalance(ctx, csrf, p20t)
-		if err != nil {
-			s.logger.Error("balance", fmt.Sprintf("task=[%s] fetch balance error: %v", task.Name, err))
-			s.set(task.ID, Info{Error: err.Error()})
-			continue
-		}
-		s.set(task.ID, info)
 	}
 }
 
@@ -355,4 +377,66 @@ func (s *Service) fetchBalance(ctx context.Context, csrf, p20t string) (Info, er
 		Futures:   strconv.FormatFloat(futures, 'f', 2, 64),
 		UpdatedAt: time.Now(),
 	}, nil
+}
+
+func (s *Service) fetchTurboFlowBalance(ctx context.Context, task config.TaskConfig) (Info, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, turboflowAssetsURL, nil)
+	if err != nil {
+		return Info{}, err
+	}
+	req.Header.Set("accept", "application/json, text/plain, */*")
+	req.Header.Set("authorization", task.Auth["authorization"])
+	req.Header.Set("biz-pf", task.Auth["biz-pf"])
+	req.Header.Set("lang", "zh-cn")
+	req.Header.Set("origin", "https://www.turboflow.xyz")
+	req.Header.Set("referer", "https://www.turboflow.xyz/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return Info{}, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Info{}, err
+	}
+
+	var payload struct {
+		Errno string `json:"errno"`
+		Msg   string `json:"msg"`
+		Data  struct {
+			List []struct {
+				CoinCode         string `json:"coin_code"`
+				CoinName         string `json:"coin_name"`
+				AvailableBalance string `json:"available_balance"`
+			} `json:"list"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return Info{}, fmt.Errorf("parse response failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || payload.Errno != "200" {
+		return Info{}, fmt.Errorf("unexpected status=%d errno=%s msg=%s", resp.StatusCode, payload.Errno, payload.Msg)
+	}
+
+	for _, asset := range payload.Data.List {
+		if asset.CoinCode != "1" && !strings.EqualFold(asset.CoinName, "USDT") {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(asset.AvailableBalance), 64)
+		if err != nil {
+			return Info{}, fmt.Errorf("parse USDT available_balance failed: %w", err)
+		}
+		balance := strconv.FormatFloat(v, 'f', 2, 64)
+		return Info{
+			Platform:  "turboflow",
+			Total:     balance,
+			Futures:   balance,
+			UpdatedAt: time.Now(),
+		}, nil
+	}
+
+	return Info{}, fmt.Errorf("USDT asset not found in TurboFlow response")
 }

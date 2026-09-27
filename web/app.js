@@ -61,10 +61,6 @@ function initConfig() { loadConfig().catch(console.error); updateWSStatus(); set
 
 async function loadSummary() {
   const s = await apiGet("/api/balances/summary");
-  const totalEl = $("summary-total");
-  if (totalEl) totalEl.textContent = s.total ? `${s.total} USDT` : "--";
-  const countEl = $("summary-account-count");
-  if (countEl) countEl.textContent = `${s.accountCount || 0} 个币安账号`;
 
   const listEl = $("summary-daily-list");
   if (!listEl) return;
@@ -103,6 +99,41 @@ async function loadBalances() {
     el.title = `总 ${info.total || "0.00"} · 更新 ${new Date(info.updatedAt).toLocaleTimeString()}`;
     el.className = "text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200";
   }
+
+  const entries = Object.entries(data || {});
+  const total = entries.reduce((sum, [, info]) => {
+    if (info.error) return sum;
+    return sum + (parseFloat(info.total) || 0);
+  }, 0);
+  const totalEl = $("summary-total");
+  if (totalEl) totalEl.textContent = entries.length ? `${total.toFixed(2)} USDT` : "--";
+
+  const tagsEl = $("summary-account-count");
+  if (tagsEl) tagsEl.innerHTML = renderBalanceTags(data || {});
+}
+
+function renderBalanceTags(data) {
+  const tasks = (stateTasks || []).filter(t => t.type === "binance" || t.type === "turboflow" || data[t.id]);
+  if (!tasks.length) return '<span class="text-gray-400">暂无余额账号</span>';
+  return tasks.map(t => {
+    const info = data[t.id];
+    const hasError = info && info.error;
+    const amount = !info ? "--" : (hasError ? "余额⚠️" : `${info.total || "0.00"} USDT`);
+    const typeStyles = {
+      binance: "bg-yellow-50 text-yellow-700 border-yellow-200",
+      turboflow: "bg-purple-50 text-purple-700 border-purple-200",
+      hibt: "bg-blue-50 text-blue-700 border-blue-200",
+      raw: "bg-gray-50 text-gray-600 border-gray-200"
+    };
+    const typeCls = typeStyles[t.type] || typeStyles.raw;
+    const tagCls = hasError ? "bg-red-50 border-red-200" : "bg-white border-gray-200";
+    const title = hasError ? ` title="${esc(info.error)}"` : "";
+    return `<span class="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 shadow-sm ${tagCls}"${title}>
+      <span class="text-[11px] font-semibold text-gray-800">${esc(t.name)}</span>
+      <span class="rounded-full border px-1.5 py-px text-[9px] font-medium uppercase tracking-wide ${typeCls}">${esc(t.type)}</span>
+      <span class="font-mono text-[11px] font-semibold ${hasError ? "text-red-600" : "text-emerald-600"}">${esc(amount)}</span>
+    </span>`;
+  }).join("");
 }
 
 async function loadConfig() {
@@ -301,7 +332,7 @@ function card(t, idx) {
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
         <input class="border rounded px-2 py-1 text-xs font-semibold w-28" data-field="name" value="${esc(t.name)}" />
         ${platformBadge(t.type)}
-        ${t.type === "binance" ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
+        ${(t.type === "binance" || t.type === "turboflow") ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
         <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>

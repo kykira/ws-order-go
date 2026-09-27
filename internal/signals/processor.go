@@ -77,13 +77,10 @@ func (p *Processor) weightsForTasks(tasks []config.TaskConfig) []float64 {
 	}
 	balances := p.balanceProvider.GetFuturesBalances()
 
-	// Compute the average balance only across matched Binance accounts with
-	// valid balances, then use it as the target for inverse-balance weighting.
+	// Compute the average balance only across matched accounts with valid
+	// balances, then use it as the target for inverse-balance weighting.
 	target, valid := 0.0, 0
 	for _, task := range tasks {
-		if task.Type != "binance" {
-			continue
-		}
 		if bal, ok := balances[task.ID]; ok && bal > 0 {
 			target += bal
 			valid++
@@ -97,9 +94,6 @@ func (p *Processor) weightsForTasks(tasks []config.TaskConfig) []float64 {
 	// weight = 1 + 2 * clamp((target-balance)/target, 0, 1)
 	// so the strongest/weakest weight ratio is at most 3:1.
 	for i, task := range tasks {
-		if task.Type != "binance" {
-			continue
-		}
 		bal, ok := balances[task.ID]
 		if !ok || bal <= 0 {
 			continue

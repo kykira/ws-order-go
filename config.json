@@ -38,7 +38,7 @@
       "name": "TurboFlow",
       "type": "turboflow",
       "auth": {
-        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTA0MTk0MTAsImp3dElkIjoiMzhiN2E2YjItMzMyYS00OWU0LThmYzgtYzBjOTliMzRjNDZmIiwib3JpZ19pYXQiOjE3ODc4Mjc0MTAsInRrVmFsU3RhIjp0cnVlLCJ1c2VySWQiOiI1NjEyNjY0NTI4NDEzMjE0NzIiLCJ1c2VyTGFzdExvZ2luQXQiOiIyMDI2LTA4LTI3VDEwOjQzOjMwLjA1ODg1NzEzNloiLCJ1c2VyUm9sZVR5cGUiOiIwIn0.ftF1tSHvLnZMiWYs3XTS4307ksGAnZcQDHWUhKs5LTc",
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3OTMwODIwMTgsImp3dElkIjoiMGIxNzZhNWItZGU4Yy00OWM1LWI5NGItNTllNTVjYTA1NTAwIiwib3JpZ19pYXQiOjE3OTA0OTAwMTgsInRrVmFsU3RhIjp0cnVlLCJ1c2VySWQiOiI1NjEyNjY0NTI4NDEzMjE0NzIiLCJ1c2VyTGFzdExvZ2luQXQiOiIyMDI2LTA5LTI3VDA2OjIwOjE4LjM2ODM0ODgwMVoiLCJ1c2VyUm9sZVR5cGUiOiIwIn0.HfrRIHnXL1mVg0kRCtD619DJR3aaN0_zpuqoI5la9z4",
         "biz-pf": "6",
         "uid": "561266452841321472"
       },
@@ -136,11 +136,11 @@
           "accounts": [
             {
               "accountId": "tf-pair6",
-              "amount": "2"
+              "amount": "7"
             },
             {
               "accountId": "acct-r8t3cn",
-              "amount": "3"
+              "amount": "4"
             },
             {
               "accountId": "acct-vei97q"
@@ -162,7 +162,7 @@
           "accounts": [
             {
               "accountId": "tf-pair6",
-              "amount": "2"
+              "amount": "7"
             },
             {
               "accountId": "acct-wn7feh"
@@ -184,7 +184,7 @@
           "accounts": [
             {
               "accountId": "tf-pair6",
-              "amount": "2"
+              "amount": "7"
             }
           ]
         }
@@ -193,7 +193,7 @@
     {
       "id": "btc-30m-v1",
       "name": "btc-30m-v1",
-      "enabled": true,
+      "enabled": false,
       "groups": [
         {
           "id": "grp-2pko87",
@@ -203,7 +203,7 @@
           "accounts": [
             {
               "accountId": "tf-pair6",
-              "amount": "2"
+              "amount": "4"
             },
             {
               "accountId": "acct-wn7feh"
@@ -225,7 +225,7 @@
           "accounts": [
             {
               "accountId": "acct-r8t3cn",
-              "amount": "3"
+              "amount": "4"
             },
             {
               "accountId": "acct-vei97q"
@@ -247,7 +247,7 @@
           "accounts": [
             {
               "accountId": "acct-r8t3cn",
-              "amount": "3"
+              "amount": "4"
             },
             {
               "accountId": "acct-vei97q"
@@ -269,7 +269,7 @@
           "accounts": [
             {
               "accountId": "tf-pair6",
-              "amount": "2"
+              "amount": "7"
             }
           ]
         }
