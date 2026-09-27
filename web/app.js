@@ -100,7 +100,9 @@ async function loadBalances() {
     el.className = "text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200";
   }
 
-  const entries = Object.entries(data || {});
+  const balanceTasks = enabledBalanceTasks();
+  const enabledIds = new Set(balanceTasks.map(t => t.id));
+  const entries = Object.entries(data || {}).filter(([id]) => enabledIds.has(id));
   const total = entries.reduce((sum, [, info]) => {
     if (info.error) return sum;
     return sum + (parseFloat(info.total) || 0);
@@ -109,11 +111,15 @@ async function loadBalances() {
   if (totalEl) totalEl.textContent = entries.length ? `${total.toFixed(2)} USDT` : "--";
 
   const tagsEl = $("summary-account-count");
-  if (tagsEl) tagsEl.innerHTML = renderBalanceTags(data || {});
+  if (tagsEl) tagsEl.innerHTML = renderBalanceTags(data || {}, balanceTasks);
 }
 
-function renderBalanceTags(data) {
-  const tasks = (stateTasks || []).filter(t => t.type === "binance" || t.type === "turboflow" || data[t.id]);
+function enabledBalanceTasks() {
+  return (stateTasks || []).filter(t => t.enabled && (t.type === "binance" || t.type === "turboflow"));
+}
+
+function renderBalanceTags(data, tasks) {
+  tasks = tasks || enabledBalanceTasks();
   if (!tasks.length) return '<span class="text-gray-400">暂无余额账号</span>';
   return tasks.map(t => {
     const info = data[t.id];
@@ -332,7 +338,7 @@ function card(t, idx) {
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
         <input class="border rounded px-2 py-1 text-xs font-semibold w-28" data-field="name" value="${esc(t.name)}" />
         ${platformBadge(t.type)}
-        ${(t.type === "binance" || t.type === "turboflow") ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
+        ${(t.enabled && (t.type === "binance" || t.type === "turboflow")) ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
         <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>

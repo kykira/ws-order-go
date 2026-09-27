@@ -286,6 +286,10 @@ func (s *Service) saveSnapshotsLocked(snapshots []Snapshot) {
 func (s *Service) FetchAll(ctx context.Context) {
 	cfg := s.cfgMgr.Get()
 	for _, task := range cfg.Tasks {
+		if !task.Enabled {
+			s.delete(task.ID)
+			continue
+		}
 		switch task.Type {
 		case "binance":
 			csrf := task.Auth["csrftoken"]
@@ -324,6 +328,12 @@ func (s *Service) set(taskID string, info Info) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.balances[taskID] = info
+}
+
+func (s *Service) delete(taskID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.balances, taskID)
 }
 
 func (s *Service) fetchBalance(ctx context.Context, csrf, p20t string) (Info, error) {

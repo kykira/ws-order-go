@@ -56,7 +56,7 @@
           "return_rate": "85"
         }
       },
-      "enabled": true,
+      "enabled": false,
       "skipSignals": 0,
       "expiresAt": 0,
       "method": "POST",
@@ -135,10 +135,6 @@
           "dispatch": "all",
           "accounts": [
             {
-              "accountId": "tf-pair6",
-              "amount": "7"
-            },
-            {
               "accountId": "acct-r8t3cn",
               "amount": "4"
             },
@@ -161,10 +157,6 @@
           "dispatch": "all",
           "accounts": [
             {
-              "accountId": "tf-pair6",
-              "amount": "7"
-            },
-            {
               "accountId": "acct-wn7feh"
             }
           ]
@@ -181,12 +173,7 @@
           "name": "v1组",
           "enabled": true,
           "dispatch": "all",
-          "accounts": [
-            {
-              "accountId": "tf-pair6",
-              "amount": "7"
-            }
-          ]
+          "accounts": []
         }
       ]
     },
@@ -201,10 +188,6 @@
           "enabled": true,
           "dispatch": "all",
           "accounts": [
-            {
-              "accountId": "tf-pair6",
-              "amount": "4"
-            },
             {
               "accountId": "acct-wn7feh"
             }
@@ -266,12 +249,7 @@
           "name": "eth-30m-v6",
           "enabled": true,
           "dispatch": "all",
-          "accounts": [
-            {
-              "accountId": "tf-pair6",
-              "amount": "7"
-            }
-          ]
+          "accounts": []
         }
       ]
     }
