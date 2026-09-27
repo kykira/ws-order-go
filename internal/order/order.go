@@ -227,6 +227,24 @@ func hibtSymbol(symbol string) string {
 	return s
 }
 
+// turboFlowDefaultSymbols is a built-in fallback for TurboFlow accounts that do
+// not define task.Symbols. Without it, an ETH signal would fall back to the
+// account's biz-pf (often the BTC pair) and be sent as a BTC order.
+var turboFlowDefaultSymbols = map[string]map[string]string{
+	"BTCUSDT": {
+		"coin_code":   "1",
+		"pair_id":     "6",
+		"pool_id":     "1",
+		"return_rate": "85",
+	},
+	"ETHUSDT": {
+		"coin_code":   "1",
+		"pair_id":     "5",
+		"pool_id":     "11",
+		"return_rate": "85",
+	},
+}
+
 func defaultURLForType(accountType string) string {
 	switch accountType {
 	case "hibt":
@@ -301,6 +319,9 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 
 	bizPf := task.Auth["biz-pf"]
 	symParams := task.Symbols[req.Symbol]
+	if symParams == nil && task.Type == "turboflow" {
+		symParams = turboFlowDefaultSymbols[strings.ToUpper(strings.TrimSpace(req.Symbol))]
+	}
 	coinCode := "1"
 	pairID := bizPf
 	poolID := "1"
