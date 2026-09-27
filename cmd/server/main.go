@@ -17,6 +17,7 @@ import (
 	"github.com/kykira/ws-order-go/internal/logs"
 	"github.com/kykira/ws-order-go/internal/order"
 	"github.com/kykira/ws-order-go/internal/signals"
+	"github.com/kykira/ws-order-go/internal/tfrealtime"
 	"github.com/kykira/ws-order-go/internal/wsclient"
 	"github.com/kykira/ws-order-go/internal/wsserver"
 )
@@ -32,7 +33,9 @@ func main() {
 
 	orderClient := order.NewClient(logger)
 	balanceSvc := balance.NewService(cfgManager, logger)
+	tfRealtime := tfrealtime.NewService(cfgManager, logger)
 	processor := signals.NewProcessor(cfgManager, logger, orderClient, balanceSvc)
+	processor.SetOddsProvider(tfRealtime)
 	wsMgr := wsclient.NewManager(cfgManager, logger, processor)
 	wsSrv := wsserver.NewServer(cfgManager, logger, processor)
 
@@ -40,12 +43,15 @@ func main() {
 	wsMgr.Sync()
 	// 启动币安账号余额拉取（首次立即拉取，之后每分钟一次）
 	balanceSvc.Start()
+	// 启动 TurboFlow 实时赔率（evt_cfg_*）订阅
+	tfRealtime.Start()
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsMgr, wsSrv, orderClient))
 	mux.HandleFunc("/api/balances", handleBalances(balanceSvc))
 	mux.HandleFunc("/api/balances/summary", handleBalancesSummary(balanceSvc))
+	mux.HandleFunc("/api/tf/realtime", handleTFRealtime(tfRealtime))
 	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsMgr))
 	mux.HandleFunc("/api/ws/disconnect", handleWSDisconnect(cfgManager, logger, wsMgr))
 	mux.HandleFunc("/api/ws/status", handleWSStatus(wsMgr, wsSrv))
@@ -176,6 +182,17 @@ func handleBalancesSummary(svc *balance.Service) http.HandlerFunc {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(svc.Summary())
+	}
+}
+
+func handleTFRealtime(svc *tfrealtime.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(svc.GetSnapshot())
 	}
 }
 

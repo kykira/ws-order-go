@@ -35,6 +35,7 @@ type TaskConfig struct {
 	Type           string                       `json:"type,omitempty"`    // binance | hibt | turboflow | raw
 	Auth           map[string]string            `json:"auth,omitempty"`    // 平台 token 字段，例如 csrftoken/cookie/token/account_id
 	Symbols        map[string]map[string]string `json:"symbols,omitempty"` // 平台 symbol 映射，如 turboflow: BTCUSDT -> {pair_id, coin_code}
+	MinOdds        string                       `json:"minOdds,omitempty"` // TurboFlow 最低赔率阈值，达到后立即下单
 	Enabled        bool                         `json:"enabled"`
 	AllowedSymbols string                       `json:"allowedSymbols,omitempty"` // 兼容旧信号：留空表示全部 symbol
 	SkipSignals    int                          `json:"skipSignals"`

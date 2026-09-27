@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
 	"github.com/kykira/ws-order-go/internal/order"
+	"github.com/kykira/ws-order-go/internal/tfrealtime"
 )
 
 type Signal struct {
@@ -37,11 +39,19 @@ type BalanceProvider interface {
 	GetFuturesBalances() map[string]float64
 }
 
+// OddsProvider supplies the latest TurboFlow evt_cfg snapshot for signal-time
+// odds waiting.
+type OddsProvider interface {
+	GetPair(symbol string) (tfrealtime.Pair, bool)
+	Updates() <-chan struct{}
+}
+
 type Processor struct {
 	cfg             *config.Manager
 	logger          *logs.Logger
 	order           *order.Client
 	balanceProvider BalanceProvider
+	oddsProvider    OddsProvider
 
 	mu            sync.Mutex
 	seenSkip      map[string]int
@@ -61,6 +71,11 @@ func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.C
 		seenSkip:        make(map[string]int),
 		skipStartTime:   make(map[string]time.Time),
 	}
+}
+
+// SetOddsProvider injects the TurboFlow realtime odds snapshot source.
+func (p *Processor) SetOddsProvider(provider OddsProvider) {
+	p.oddsProvider = provider
 }
 
 // weightsForTasks returns a random weight for every task. Binance accounts
@@ -443,14 +458,143 @@ func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.Task
 	}
 }
 
+const (
+	tfOddsWaitDuration = 50 * time.Second
+)
+
+func parseOdds(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return v
+}
+
+func (p *Processor) minOdds(task config.TaskConfig) float64 {
+	if task.Type != "turboflow" {
+		return 0
+	}
+	return parseOdds(task.MinOdds)
+}
+
+func (p *Processor) orderTimeout(task config.TaskConfig) time.Duration {
+	timeout := 60 * time.Second
+	if p.minOdds(task) > 0 {
+		timeout = tfOddsWaitDuration + 60*time.Second
+	}
+	return timeout
+}
+
+func periodSeconds(period string) int {
+	switch strings.ToLower(strings.TrimSpace(period)) {
+	case "30s":
+		return 30
+	case "45s":
+		return 45
+	case "1m":
+		return 60
+	case "3m":
+		return 180
+	case "5m":
+		return 300
+	case "10m":
+		return 600
+	case "15m":
+		return 900
+	case "30m":
+		return 1800
+	case "1h":
+		return 3600
+	case "2h":
+		return 7200
+	case "4h":
+		return 14400
+	default:
+		return 0
+	}
+}
+
+func (p *Processor) currentDirectionOdds(req order.PlaceOrderRequest) float64 {
+	if p.oddsProvider == nil {
+		return 0
+	}
+	pair, ok := p.oddsProvider.GetPair(req.Symbol)
+	if !ok {
+		return 0
+	}
+	secs := periodSeconds(req.Period)
+	if secs == 0 {
+		return 0
+	}
+	for _, opt := range pair.Options {
+		if opt.Duration != secs {
+			continue
+		}
+		if strings.EqualFold(req.Action, "buy") {
+			return parseOdds(opt.UpRate)
+		}
+		if strings.EqualFold(req.Action, "sell") {
+			return parseOdds(opt.DownRate)
+		}
+	}
+	return 0
+}
+
+// placeOrderWithOdds waits up to 50s for the configured minimum odds on a
+// TurboFlow account, then places the order exactly once: immediately when the
+// threshold is reached, or when the 50s window expires.
+func (p *Processor) placeOrderWithOdds(ctx context.Context, task config.TaskConfig, req order.PlaceOrderRequest) error {
+	threshold := p.minOdds(task)
+	if threshold <= 0 || p.oddsProvider == nil {
+		return p.order.PlaceOrder(ctx, task, req)
+	}
+
+	place := func() error {
+		return p.order.PlaceOrder(ctx, task, req)
+	}
+
+	if rate := p.currentDirectionOdds(req); rate >= threshold {
+		p.logger.Info("order", fmt.Sprintf("account=[%s] odds reached immediately action=%s symbol=%s period=%s rate=%.4f threshold=%.4f", task.Name, req.Action, req.Symbol, req.Period, rate, threshold))
+		return place()
+	}
+
+	p.logger.Info("order", fmt.Sprintf("account=[%s] wait odds up to %s action=%s symbol=%s period=%s threshold=%.4f", task.Name, tfOddsWaitDuration, req.Action, req.Symbol, req.Period, threshold))
+	timer := time.NewTimer(tfOddsWaitDuration)
+	defer timer.Stop()
+
+	for {
+		// Re-check before blocking; this also covers updates that arrived
+		// between the previous check and Updates().
+		if rate := p.currentDirectionOdds(req); rate >= threshold {
+			p.logger.Info("order", fmt.Sprintf("account=[%s] odds reached action=%s symbol=%s period=%s rate=%.4f threshold=%.4f", task.Name, req.Action, req.Symbol, req.Period, rate, threshold))
+			return place()
+		}
+		updates := p.oddsProvider.Updates()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-updates:
+			continue
+		case <-timer.C:
+			if rate := p.currentDirectionOdds(req); rate >= threshold {
+				p.logger.Info("order", fmt.Sprintf("account=[%s] odds reached at timeout action=%s symbol=%s period=%s rate=%.4f threshold=%.4f", task.Name, req.Action, req.Symbol, req.Period, rate, threshold))
+			} else {
+				p.logger.Info("order", fmt.Sprintf("account=[%s] odds wait timeout after %s, placing fallback order action=%s symbol=%s period=%s threshold=%.4f", task.Name, tfOddsWaitDuration, req.Action, req.Symbol, req.Period, threshold))
+			}
+			return place()
+		}
+	}
+}
+
 func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfig, action, amount, unit, period, matchedRange string) {
 	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, sig.Strategy, task.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
 	go func(t config.TaskConfig, req order.PlaceOrderRequest) {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), p.orderTimeout(t))
 		defer cancel()
 
-		if err := p.order.PlaceOrder(ctx, t, req); err != nil {
+		if err := p.placeOrderWithOdds(ctx, t, req); err != nil {
 			p.logger.Error("signal", fmt.Sprintf("account=[%s] order error: %v", t.Name, err))
 		}
 	}(task, order.PlaceOrderRequest{
@@ -490,10 +634,10 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 	}
 
 	go func(t config.TaskConfig, r order.PlaceOrderRequest) {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), p.orderTimeout(t))
 		defer cancel()
 
-		err := p.order.PlaceOrder(ctx, t, r)
+		err := p.placeOrderWithOdds(ctx, t, r)
 		if err == nil {
 			return
 		}
@@ -542,8 +686,8 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 
 		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] fallback attempt=%d/%d after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, sig.Strategy, task.Name, attempt+1, maxFallbackOrderAttempts, sig.Symbol, amt, req.Unit))
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		err := p.order.PlaceOrder(ctx, task, r)
+		ctx, cancel := context.WithTimeout(context.Background(), p.orderTimeout(task))
+		err := p.placeOrderWithOdds(ctx, task, r)
 		cancel()
 		if err == nil {
 			p.logger.Info("signal", fmt.Sprintf("dispatch fallback account=[%s] success", task.Name))

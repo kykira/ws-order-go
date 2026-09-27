@@ -57,7 +57,16 @@ function setChk(id,v) { const e=$(id); if(e)e.checked=!!v; }
 
 // ── Init ──
 
-function initConfig() { loadConfig().catch(console.error); updateWSStatus(); setInterval(updateWSStatus, 3000); setInterval(() => { loadBalances().catch(console.error); loadSummary().catch(console.error); }, 10000); }
+function initConfig() {
+  loadConfig().catch(console.error);
+  updateWSStatus();
+  setInterval(updateWSStatus, 3000);
+  setInterval(() => { loadBalances().catch(console.error); loadSummary().catch(console.error); }, 10000);
+  loadTFRealtime().catch(console.error);
+  setInterval(() => loadTFRealtime().catch(console.error), 2000);
+  $("tfSymbol")?.addEventListener("change", () => renderTFRealtime(stateTFRealtime));
+  $("tfPeriod")?.addEventListener("change", () => renderTFRealtime(stateTFRealtime));
+}
 
 async function loadSummary() {
   const s = await apiGet("/api/balances/summary");
@@ -140,6 +149,52 @@ function renderBalanceTags(data, tasks) {
       <span class="font-mono text-[11px] font-semibold ${hasError ? "text-red-600" : "text-emerald-600"}">${esc(amount)}</span>
     </span>`;
   }).join("");
+}
+
+let stateTFRealtime = null;
+
+async function loadTFRealtime() {
+  stateTFRealtime = await apiGet("/api/tf/realtime");
+  renderTFRealtime(stateTFRealtime);
+}
+
+function renderTFRealtime(data) {
+  const statusEl = $("tf-stream-status");
+  const symbolEl = $("tfSymbol");
+  const periodEl = $("tfPeriod");
+  const symbol = symbolEl?.value || "BTCUSDT";
+  const period = parseInt(periodEl?.value || "900", 10);
+
+  const pairs = data?.pairs || {};
+  const pair = pairs[symbol];
+  const option = (pair?.options || []).find(o => +o.duration === period);
+
+  if (statusEl) {
+    const connected = !!data?.connected;
+    const err = data?.lastError || "";
+    statusEl.textContent = connected ? "已连接" : (err ? `未连接: ${err}` : "未连接");
+    statusEl.className = connected
+      ? "inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200"
+      : "inline-flex items-center text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-500 border border-red-200";
+    statusEl.title = err;
+  }
+
+  const updatedEl = $("tf-updated");
+  if (updatedEl) {
+    const t = pair?.updatedAt || data?.updatedAt;
+    updatedEl.textContent = t ? `更新 ${new Date(t).toLocaleTimeString()}` : "--";
+  }
+
+  setText("tf-up-rate", option?.upRate || "--");
+  setText("tf-down-rate", option?.downRate || "--");
+  setText("tf-amount-limit", option ? `${option.minAmount || "--"} / ${option.maxAmount || "--"}` : "-- / --");
+  setText("tf-status", option ? `${option.status || "--"} / ${pair?.enabled ? "enabled" : "disabled"}` : "--");
+
+}
+
+function setText(id, value) {
+  const el = $(id);
+  if (el) el.textContent = value;
 }
 
 async function loadConfig() {
@@ -232,6 +287,7 @@ function n(t) {
   return { id: String(t.id||"").trim()||rid("acct"), name: String(t.name||"").trim()||"Account", enabled: t.enabled!==false,
     type: String(t.type||"binance").trim(), auth,
     symbols: t.symbols && typeof t.symbols === "object" ? t.symbols : {},
+    minOdds: String(t.minOdds||"").trim(),
     timeRanges: ctr(t.timeRanges),
     expiresAt: +t.expiresAt||0,
     apiUrl: String(t.apiUrl||""), method: String(t.method||"POST").toUpperCase(),
@@ -363,6 +419,11 @@ function card(t, idx) {
       <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">p20t</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="auth-p20t" value="${esc(t.auth?.p20t||"")}" oninput="syncBinanceAuthFields(this)" /></div>
     </div>` : ""}
 
+    ${t.type === "turboflow" ? `<div class="flex gap-2 items-end">
+      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">最低赔率</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="minOdds" value="${esc(t.minOdds||"")}" placeholder="如 0.80" /></div>
+      <div class="text-[10px] text-gray-400 mb-1.5">信号触发后最多等 50s：达到阈值立即下单，未达到则 50s 后兜底下单</div>
+    </div>` : ""}
+
     ${t.type === "raw" ? `<div class="grid gap-2 sm:grid-cols-2">
       <div><label class="block text-[11px] text-gray-500 mb-0.5">API URL</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="apiUrl" value="${esc(t.apiUrl)}" placeholder="https://..." /></div>
       <div><label class="block text-[11px] text-gray-500 mb-0.5">Method</label><select class="border rounded w-full px-2 py-1 text-xs bg-white" data-field="method">${["GET","POST","PUT","DELETE"].map(m=>`<option ${t.method===m?"selected":""}>${m}</option>`).join("")}</select></div>
@@ -428,6 +489,7 @@ function collectTasks() {
     try { symbols = JSON.parse(g("symbols")||"{}") || {}; } catch { symbols = {}; }
     return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"),
       type, auth, symbols,
+      minOdds: String(g("minOdds")||"").trim(),
       timeRanges: colTR(card), expiresAt:+g("expiresAt")||0,
       apiUrl: String(g("apiUrl")||"").trim(), method: String(g("method")||"POST").trim().toUpperCase(),
       headers: String(g("headers")||""), body: String(g("body")||""),

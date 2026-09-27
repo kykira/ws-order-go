@@ -6,6 +6,7 @@ import (
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
 	"github.com/kykira/ws-order-go/internal/order"
+	"github.com/kykira/ws-order-go/internal/tfrealtime"
 )
 
 func TestDispatchRandomPicksOne(t *testing.T) {
@@ -211,6 +212,45 @@ func TestBinanceBalanceWeights(t *testing.T) {
 	weights = proc.weightsForTasks(tasks[:2])
 	if weights[0]/weights[1] > 3 || weights[0] <= weights[1] || weights[1] != 1 {
 		t.Fatalf("expected capped weights near 3/1 for extreme balance gap, got %v/%v", weights[0], weights[1])
+	}
+}
+
+type fakeOddsProvider struct {
+	pairs map[string]tfrealtime.Pair
+}
+
+func (f fakeOddsProvider) GetPair(symbol string) (tfrealtime.Pair, bool) {
+	p, ok := f.pairs[symbol]
+	return p, ok
+}
+
+func (f fakeOddsProvider) Updates() <-chan struct{} { return nil }
+
+func TestTurboFlowDirectionOdds(t *testing.T) {
+	proc := &Processor{oddsProvider: fakeOddsProvider{pairs: map[string]tfrealtime.Pair{
+		"BTCUSDT": {
+			PairID: "6",
+			Symbol: "BTCUSDT",
+			Options: []tfrealtime.Option{
+				{Duration: 1800, UpRate: "0.82", DownRate: "0.79"},
+			},
+		},
+	}}}
+
+	buy := order.PlaceOrderRequest{Action: "buy", Symbol: "BTCUSDT", Period: "30m"}
+	if got := proc.currentDirectionOdds(buy); got != 0.82 {
+		t.Fatalf("buy odds = %v, want 0.82", got)
+	}
+	sell := order.PlaceOrderRequest{Action: "sell", Symbol: "BTCUSDT", Period: "30m"}
+	if got := proc.currentDirectionOdds(sell); got != 0.79 {
+		t.Fatalf("sell odds = %v, want 0.79", got)
+	}
+
+	if got := proc.minOdds(config.TaskConfig{Type: "turboflow", MinOdds: "0.80"}); got != 0.80 {
+		t.Fatalf("minOdds = %v, want 0.80", got)
+	}
+	if got := proc.minOdds(config.TaskConfig{Type: "binance", MinOdds: "0.80"}); got != 0 {
+		t.Fatalf("binance minOdds = %v, want 0", got)
 	}
 }
 
