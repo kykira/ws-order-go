@@ -136,16 +136,13 @@ func (s *Service) GetFuturesBalances() map[string]float64 {
 	return out
 }
 
-// Summary 计算所有币安账号的合计资产与最近几日收益。
+// Summary 计算所有已接入账号的合计资产与最近几日收益。
 func (s *Service) Summary() Summary {
 	s.mu.RLock()
 	var total float64
 	accountCount := 0
 	for _, info := range s.balances {
 		if info.Error != "" {
-			continue
-		}
-		if info.Platform != "" && info.Platform != "binance" {
 			continue
 		}
 		t, _ := strconv.ParseFloat(info.Total, 64)
