@@ -359,7 +359,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second+order.MaxRandomDelay(task))
 		defer cancel()
 		if err := orderClient.PlaceOrder(ctx, task, order.PlaceOrderRequest{
 			Amount: "5",

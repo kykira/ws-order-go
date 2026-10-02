@@ -288,6 +288,7 @@ function n(t) {
     type: String(t.type||"binance").trim(), auth,
     symbols: t.symbols && typeof t.symbols === "object" ? t.symbols : {},
     minOdds: String(t.minOdds||"").trim(),
+    randomDelaySeconds: String(t.randomDelaySeconds||"").trim(),
     timeRanges: ctr(t.timeRanges),
     expiresAt: +t.expiresAt||0,
     apiUrl: String(t.apiUrl||""), method: String(t.method||"POST").toUpperCase(),
@@ -417,6 +418,7 @@ function card(t, idx) {
     ${t.type === "binance" ? `<div class="flex gap-2 items-end">
       <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">csrftoken</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="auth-csrftoken" value="${esc(t.auth?.csrftoken||"")}" oninput="syncBinanceAuthFields(this)" /></div>
       <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">p20t</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="auth-p20t" value="${esc(t.auth?.p20t||"")}" oninput="syncBinanceAuthFields(this)" /></div>
+      <div style="width:9rem"><label class="block text-[11px] text-gray-500 mb-0.5">随机延迟(秒)</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="randomDelaySeconds" value="${esc(t.randomDelaySeconds||"")}" placeholder="如 5 或 3-8" /></div>
     </div>` : ""}
 
     ${t.type === "turboflow" ? `<div class="flex gap-2 items-end">
@@ -490,6 +492,7 @@ function collectTasks() {
     return { id, name: String(g("name")||"").trim()||id, enabled: gc("enabled"),
       type, auth, symbols,
       minOdds: String(g("minOdds")||"").trim(),
+      randomDelaySeconds: String(g("randomDelaySeconds")||"").trim(),
       timeRanges: colTR(card), expiresAt:+g("expiresAt")||0,
       apiUrl: String(g("apiUrl")||"").trim(), method: String(g("method")||"POST").trim().toUpperCase(),
       headers: String(g("headers")||""), body: String(g("body")||""),

@@ -32,10 +32,11 @@ type WSServerConfig struct {
 type TaskConfig struct {
 	ID             string                       `json:"id"`
 	Name           string                       `json:"name"`
-	Type           string                       `json:"type,omitempty"`    // binance | hibt | turboflow | raw
-	Auth           map[string]string            `json:"auth,omitempty"`    // 平台 token 字段，例如 csrftoken/cookie/token/account_id
-	Symbols        map[string]map[string]string `json:"symbols,omitempty"` // 平台 symbol 映射，如 turboflow: BTCUSDT -> {pair_id, coin_code}
-	MinOdds        string                       `json:"minOdds,omitempty"` // TurboFlow 最低赔率阈值，达到后立即下单
+	Type           string                       `json:"type,omitempty"`               // binance | hibt | turboflow | raw
+	Auth           map[string]string            `json:"auth,omitempty"`               // 平台 token 字段，例如 csrftoken/cookie/token/account_id
+	Symbols        map[string]map[string]string `json:"symbols,omitempty"`            // 平台 symbol 映射，如 turboflow: BTCUSDT -> {pair_id, coin_code}
+	MinOdds        string                       `json:"minOdds,omitempty"`            // TurboFlow 最低赔率阈值，达到后立即下单
+	RandomDelaySec string                       `json:"randomDelaySeconds,omitempty"` // 币安账号专用：下单前随机延迟秒数，"5"=0~5s，"3-8"=3~8s，留空=不延迟
 	Enabled        bool                         `json:"enabled"`
 	AllowedSymbols string                       `json:"allowedSymbols,omitempty"` // 兼容旧信号：留空表示全部 symbol
 	SkipSignals    int                          `json:"skipSignals"`

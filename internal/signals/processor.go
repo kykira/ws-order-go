@@ -482,7 +482,8 @@ func (p *Processor) orderTimeout(task config.TaskConfig) time.Duration {
 	if p.minOdds(task) > 0 {
 		timeout = tfOddsWaitDuration + 60*time.Second
 	}
-	return timeout
+	// Binance accounts may wait a random delay before sending the order.
+	return timeout + order.MaxRandomDelay(task)
 }
 
 func periodSeconds(period string) int {

@@ -1,6 +1,12 @@
 package order
 
-import "testing"
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/kykira/ws-order-go/internal/config"
+)
 
 func TestBizResponseIsSuccess(t *testing.T) {
 	cases := []struct {
@@ -49,5 +55,56 @@ func TestPeriodConversion(t *testing.T) {
 				t.Fatalf("periodToMinutes(%q) = %q, want %q", tc.period, got, tc.min)
 			}
 		})
+	}
+}
+
+func TestParseRandomDelay(t *testing.T) {
+	cases := []struct {
+		in       string
+		min, max time.Duration
+		ok       bool
+	}{
+		{"", 0, 0, false},
+		{"0", 0, 0, false},
+		{"5", 0, 5 * time.Second, true},
+		{" 5 ", 0, 5 * time.Second, true},
+		{"3-8", 3 * time.Second, 8 * time.Second, true},
+		{"0-2", 0, 2 * time.Second, true},
+		{"3~8", 3 * time.Second, 8 * time.Second, true},
+		{"8-3", 0, 0, false},
+		{"-5", 0, 0, false},
+		{"3-", 0, 0, false},
+		{"abc", 0, 0, false},
+	}
+	for _, tc := range cases {
+		min, max, ok := parseRandomDelay(tc.in)
+		if ok != tc.ok || min != tc.min || max != tc.max {
+			t.Fatalf("parseRandomDelay(%q) = (%v,%v,%v), want (%v,%v,%v)", tc.in, min, max, ok, tc.min, tc.max, tc.ok)
+		}
+	}
+}
+
+func TestMaxRandomDelayOnlyForBinance(t *testing.T) {
+	if got := MaxRandomDelay(config.TaskConfig{Type: "binance", RandomDelaySec: "3-8"}); got != 8*time.Second {
+		t.Fatalf("MaxRandomDelay(binance 3-8) = %v, want 8s", got)
+	}
+	if got := MaxRandomDelay(config.TaskConfig{Type: "hibt", RandomDelaySec: "3-8"}); got != 0 {
+		t.Fatalf("MaxRandomDelay(hibt) = %v, want 0 (binance only)", got)
+	}
+	if got := MaxRandomDelay(config.TaskConfig{Type: "binance"}); got != 0 {
+		t.Fatalf("MaxRandomDelay(binance, unset) = %v, want 0", got)
+	}
+}
+
+func TestRandomDelaySkippedWithoutBinanceConfig(t *testing.T) {
+	c := &Client{}
+	for _, task := range []config.TaskConfig{
+		{Type: "hibt", RandomDelaySec: "5"},
+		{Type: "binance"},
+		{Type: "binance", RandomDelaySec: "0"},
+	} {
+		if err := c.randomDelay(context.Background(), task); err != nil {
+			t.Fatalf("randomDelay(type=%q, config=%q) = %v, want nil", task.Type, task.RandomDelaySec, err)
+		}
 	}
 }

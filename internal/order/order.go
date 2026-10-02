@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/url"
 	"strconv"
 	"strings"
@@ -219,6 +220,75 @@ func binanceTimeIncrement(period string) string {
 	}
 }
 
+// parseRandomDelay parses the per-account "random delay before ordering"
+// setting used by Binance accounts. Accepted forms are "" / "0" (disabled),
+// "5" (random 0-5s) and "3-8" (random 3-8s).
+func parseRandomDelay(raw string) (min, max time.Duration, ok bool) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0, 0, false
+	}
+	minSec, maxSec := 0, 0
+	if i := strings.IndexAny(v, "-~"); i >= 0 {
+		var err error
+		minSec, err = strconv.Atoi(strings.TrimSpace(v[:i]))
+		if err != nil {
+			return 0, 0, false
+		}
+		maxSec, err = strconv.Atoi(strings.TrimSpace(v[i+1:]))
+		if err != nil {
+			return 0, 0, false
+		}
+	} else {
+		var err error
+		maxSec, err = strconv.Atoi(v)
+		if err != nil {
+			return 0, 0, false
+		}
+	}
+	if minSec < 0 || maxSec <= 0 || minSec > maxSec {
+		return 0, 0, false
+	}
+	return time.Duration(minSec) * time.Second, time.Duration(maxSec) * time.Second, true
+}
+
+// MaxRandomDelay returns the longest configured random delay for a task. Only
+// Binance accounts use it, and callers add it to their order timeout so the
+// wait is not cut short by the context deadline.
+func MaxRandomDelay(task config.TaskConfig) time.Duration {
+	if task.Type != "binance" || task.RandomDelaySec == "" {
+		return 0
+	}
+	_, max, ok := parseRandomDelay(task.RandomDelaySec)
+	if !ok {
+		return 0
+	}
+	return max
+}
+
+// randomDelay sleeps for a random duration before a Binance order is sent, so
+// that orders triggered by the same signal do not all fire at the same offset.
+func (c *Client) randomDelay(ctx context.Context, task config.TaskConfig) error {
+	if task.Type != "binance" {
+		return nil
+	}
+	minDelay, maxDelay, ok := parseRandomDelay(task.RandomDelaySec)
+	if !ok {
+		return nil
+	}
+	delay := minDelay
+	if spread := maxDelay - minDelay; spread > 0 {
+		delay += time.Duration(rand.Int63n(int64(spread) + 1))
+	}
+	c.logger.Info("order", fmt.Sprintf("task=[%s] binance random delay %s (config=%s)", task.Name, delay, task.RandomDelaySec))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+		return nil
+	}
+}
+
 func hibtSymbol(symbol string) string {
 	s := strings.ToLower(strings.TrimSpace(symbol))
 	if strings.HasSuffix(s, "usdt") {
@@ -288,6 +358,11 @@ func defaultHeadersForType(task config.TaskConfig) string {
 }
 
 func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req PlaceOrderRequest) error {
+	// Binance accounts may configure a random delay before the order is sent.
+	if err := c.randomDelay(ctx, task); err != nil {
+		return err
+	}
+
 	// Resolve dynamic action value
 	actVal := req.Action
 	if req.Action == "buy" && task.ValueBuy != "" {
