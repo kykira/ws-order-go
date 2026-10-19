@@ -264,22 +264,37 @@ func (m *Manager) Save() error {
 	return m.saveLocked()
 }
 
-// saveLocked writes the config atomically (temp file + rename) so a crash or a
-// full disk can never leave a truncated config.json behind. Caller holds the lock.
+// saveLocked writes the config. It prefers an atomic temp-file + rename, but
+// falls back to an in-place write because a single-file bind mount (the normal
+// Docker deployment: ./config.json:/app/config.json) is a mount point and cannot
+// be replaced by rename (EBUSY). Without the fallback a panel save would fail.
+// Caller holds the lock.
 func (m *Manager) saveLocked() error {
 	bs, err := json.MarshalIndent(m.cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(m.path), ".config-*.tmp")
+	if err := writeAtomic(m.path, bs); err == nil {
+		return nil
+	}
+	return os.WriteFile(m.path, bs, 0644)
+}
+
+// writeAtomic is a seam so tests can exercise the in-place fallback that is used
+// when the config is a single-file bind mount (rename fails with EBUSY).
+var writeAtomic = writeFileAtomic
+
+// writeFileAtomic writes data to path through a temp file in the same directory.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
 	if err != nil {
 		return err
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeded
 
-	if _, err := tmp.Write(bs); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -293,7 +308,7 @@ func (m *Manager) saveLocked() error {
 	if err := os.Chmod(tmpName, 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, m.path)
+	return os.Rename(tmpName, path)
 }
 
 func applyEnvOverrides(cfg *Config) {
