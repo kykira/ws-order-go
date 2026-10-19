@@ -36,6 +36,10 @@ EXPOSE 9946
 
 # Set default environment variables
 ENV WSORDER_PORT=9946
+# Time ranges are evaluated in the process timezone and the balance service
+# already assumes Asia/Shanghai; without this the container runs in UTC and
+# every configured trading window shifts by 8 hours.
+ENV TZ=Asia/Shanghai
 
 # Run the binary
 CMD ["/app/wsorder-server"]

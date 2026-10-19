@@ -27,9 +27,10 @@ type Conn struct {
 	conn      *websocket.Conn
 	connected bool
 
-	ctx     context.Context
-	cancel  context.CancelFunc
-	running bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	running  bool
+	loopDone chan struct{} // closed when the current loop goroutine returns
 }
 
 // Manager 管理所有上游 WS 连接
@@ -91,10 +92,10 @@ func (m *Manager) Sync() {
 			if changed {
 				m.logger.Info("wsclient", fmt.Sprintf("upstream config changed, reconnecting [%s] %s", id, u.Name))
 				existing.Stop()
-				existing.Start(m.logger, m.processor)
 			}
 
-			// 根据 enabled 状态启停；用 IsRunning 防止 dial 过程中重复 Start 造成双连接
+			// 根据 enabled 状态启停；Start 内部会等待上一个 loop 退出，
+			// 防止 dial 过程中重复 Start 造成双连接；禁用的上游不做无谓拨号。
 			if u.Enabled && !existing.IsRunning() {
 				existing.Start(m.logger, m.processor)
 			} else if !u.Enabled && existing.IsRunning() {
@@ -178,7 +179,59 @@ func (c *Conn) IsRunning() bool {
 	return c.running
 }
 
+// snapshot reads the mutable upstream config under the lock; Manager.Sync may
+// rewrite these fields while the loop is running.
+func (c *Conn) snapshot() (name, wsURL, wsKey string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.Name, c.URL, c.Key
+}
+
+const (
+	// backoffMin is the reconnect delay after a healthy connection.
+	backoffMin = 2 * time.Second
+	// backoffMax caps the reconnect delay after repeated short-lived connections.
+	backoffMax = 30 * time.Second
+	// healthyConnDuration is how long a connection must survive for the backoff
+	// to be considered healthy and decayed back to backoffMin.
+	healthyConnDuration = 30 * time.Second
+	// loopStopWait bounds how long Start waits for a previous loop goroutine to
+	// finish before giving up, so one upstream can never have two live loops.
+	loopStopWait = 2 * time.Second
+)
+
+// sleepCtx waits for d unless ctx is cancelled first. It returns false when the
+// context was cancelled, so callers can stop promptly instead of blocking Stop.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 func (c *Conn) Start(logger *logs.Logger, processor *signals.Processor) {
+	// A previous loop may still be winding down after Stop (or after a config
+	// change). Wait for it, bounded, before starting a replacement: two live
+	// loops for one upstream would handle every signal twice.
+	c.mu.Lock()
+	prev := c.loopDone
+	c.mu.Unlock()
+	if prev != nil {
+		select {
+		case <-prev:
+		case <-time.After(loopStopWait):
+			logger.Error("wsclient", fmt.Sprintf("[%s] previous loop still stopping, start skipped", c.ID))
+			return
+		}
+	}
+
 	c.mu.Lock()
 	if c.running {
 		c.mu.Unlock()
@@ -187,10 +240,13 @@ func (c *Conn) Start(logger *logs.Logger, processor *signals.Processor) {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	c.ctx, c.cancel = context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	c.ctx, c.cancel = ctx, cancel
 	c.running = true
+	c.loopDone = done
 	c.mu.Unlock()
-	go c.loop(logger, processor)
+	go c.loop(ctx, done, logger, processor)
 }
 
 func (c *Conn) Stop() {
@@ -207,55 +263,84 @@ func (c *Conn) Stop() {
 	c.running = false
 }
 
-func (c *Conn) loop(logger *logs.Logger, processor *signals.Processor) {
-	ctx := c.ctx
-	backoff := 2 * time.Second
+func (c *Conn) loop(ctx context.Context, done chan struct{}, logger *logs.Logger, processor *signals.Processor) {
+	defer func() {
+		c.mu.Lock()
+		if c.loopDone == done {
+			c.loopDone = nil
+			c.running = false
+		}
+		c.mu.Unlock()
+		close(done)
+	}()
+
+	backoff := backoffMin
 	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("wsclient", fmt.Sprintf("upstream [%s] %s stopped", c.ID, c.Name))
+		name, wsURL, wsKey := c.snapshot()
+
+		if ctx.Err() != nil {
+			logger.Info("wsclient", fmt.Sprintf("upstream [%s] %s stopped", c.ID, name))
 			return
-		default:
 		}
 
-		c.mu.Lock()
-		wsURL := c.URL
-		wsKey := c.Key
-		c.mu.Unlock()
-
 		if wsURL == "" {
-			time.Sleep(2 * time.Second)
+			// No URL configured yet: stay idle, but keep Stop responsive.
+			sleepCtx(ctx, backoffMin)
 			continue
 		}
 
 		fullURL, err := buildWSURL(wsURL, wsKey)
 		if err != nil {
 			logger.Error("wsclient", fmt.Sprintf("[%s] invalid ws url: %v", c.ID, err))
-			time.Sleep(backoff)
+			sleepCtx(ctx, backoff)
 			continue
 		}
 
-		logger.Info("wsclient", fmt.Sprintf("[%s] %s connecting to %s", c.ID, c.Name, fullURL))
+		logger.Info("wsclient", fmt.Sprintf("[%s] %s connecting to %s", c.ID, name, fullURL))
 
-		conn, _, err := websocket.DefaultDialer.Dial(fullURL, nil)
+		// Dial through the loop context (copy the dialer instead of mutating the
+		// package global) so Stop cancels an in-flight dial, and cap the
+		// handshake instead of relying on gorilla's 45s default.
+		dialer := *websocket.DefaultDialer
+		dialer.HandshakeTimeout = 30 * time.Second
+		conn, _, err := dialer.DialContext(ctx, fullURL, nil)
 		if err != nil {
 			logger.Error("wsclient", fmt.Sprintf("[%s] dial error: %v", c.ID, err))
-			time.Sleep(backoff)
-			if backoff < 30*time.Second {
+			sleepCtx(ctx, backoff)
+			if backoff < backoffMax {
 				backoff *= 2
+				if backoff > backoffMax {
+					backoff = backoffMax
+				}
 			}
 			continue
 		}
 
+		connectedAt := time.Now()
+
+		// Stop() cannot see a connection that is still being dialled, so
+		// re-check the context and the running flag before publishing it:
+		// otherwise a cancelled loop would keep a live, chatty upstream feeding
+		// signals (and real orders) after the operator disabled it.
 		c.mu.Lock()
+		if ctx.Err() != nil || !c.running || c.ctx != ctx {
+			c.mu.Unlock()
+			_ = conn.Close()
+			logger.Info("wsclient", fmt.Sprintf("[%s] stopped during dial, connection dropped", c.ID))
+			return
+		}
 		c.conn = conn
 		c.connected = true
 		c.mu.Unlock()
 
-		logger.Info("wsclient", fmt.Sprintf("[%s] %s connected", c.ID, c.Name))
-		backoff = 2 * time.Second
+		logger.Info("wsclient", fmt.Sprintf("[%s] %s connected", c.ID, name))
 
-		if err := c.readLoop(conn, logger, processor); err != nil {
+		err = func() error {
+			connCtx, connCancel := context.WithCancel(ctx)
+			defer connCancel()
+			return c.readLoop(connCtx, conn, logger, processor)
+		}()
+		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				logger.Info("wsclient", fmt.Sprintf("[%s] connection closed normally", c.ID))
 			} else {
@@ -270,7 +355,22 @@ func (c *Conn) loop(logger *logs.Logger, processor *signals.Processor) {
 		}
 		c.mu.Unlock()
 
-		logger.Info("wsclient", fmt.Sprintf("[%s] disconnected, will reconnect", c.ID))
+		// Always wait out the backoff before re-dialling. An upstream that
+		// completes the handshake and then closes immediately (auth rejection,
+		// restart, LB drain) must not turn into a tight dial loop; only a
+		// connection that stayed healthy decays the backoff again.
+		if time.Since(connectedAt) >= healthyConnDuration {
+			backoff = backoffMin
+		} else if backoff < backoffMax {
+			backoff *= 2
+			if backoff > backoffMax {
+				backoff = backoffMax
+			}
+		}
+		logger.Info("wsclient", fmt.Sprintf("[%s] disconnected, reconnecting in %s", c.ID, backoff))
+		if !sleepCtx(ctx, backoff) {
+			continue
+		}
 	}
 }
 
@@ -287,7 +387,7 @@ func buildWSURL(raw, key string) (string, error) {
 	return u.String(), nil
 }
 
-func (c *Conn) readLoop(conn *websocket.Conn, logger *logs.Logger, processor *signals.Processor) error {
+func (c *Conn) readLoop(ctx context.Context, conn *websocket.Conn, logger *logs.Logger, processor *signals.Processor) error {
 	defer conn.Close()
 	conn.SetReadLimit(1024 * 1024)
 
@@ -304,13 +404,13 @@ func (c *Conn) readLoop(conn *websocket.Conn, logger *logs.Logger, processor *si
 		return nil
 	})
 
-	// 主动 Ping
+	// 主动 Ping；ctx 是本次连接独有的，readLoop 返回后立刻退出，避免每次重连泄漏一个 goroutine
 	go func() {
 		ticker := time.NewTicker(pingPeriod)
 		defer ticker.Stop()
 		for {
 			select {
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				c.mu.Lock()

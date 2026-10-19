@@ -109,8 +109,18 @@ func periodToSeconds(period string) string {
 	return strings.TrimSpace(period)
 }
 
+// periodToMinutes converts a period into the minutes-based duration used by
+// HiBT's timeUnit field. Sub-minute periods that the platform cannot express in
+// whole minutes are returned as fractional minutes (30s -> "0.5") so they are
+// never silently mapped onto a longer contract by mistake.
 func periodToMinutes(period string) string {
 	p := strings.ToLower(strings.TrimSpace(period))
+	switch p {
+	case "30s":
+		return "0.5"
+	case "45s":
+		return "0.75"
+	}
 	if n, unit, ok := parsePeriodUnit(p); ok {
 		switch unit {
 		case 'm':
@@ -124,6 +134,17 @@ func periodToMinutes(period string) string {
 		}
 	}
 	return strings.TrimSpace(period)
+}
+
+// jsonEscape renders s as the contents of a JSON string literal (without the
+// surrounding quotes) so that signal-supplied values substituted into a request
+// body cannot break out of their string and rewrite other order fields.
+func jsonEscape(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil || len(b) < 2 {
+		return ""
+	}
+	return string(b[1 : len(b)-1])
 }
 
 // flexString accepts either a JSON string or number for fields that some
@@ -153,16 +174,32 @@ func (f flexString) String() string { return string(f) }
 // bizResponse covers both Binance-style responses and common third-party
 // success formats such as {"errno":"200","msg":"success"}.
 type bizResponse struct {
-	Code    flexString `json:"code"`
-	Success bool       `json:"success"`
-	Ok      bool       `json:"ok"`
-	Errno   string     `json:"errno"`
-	Msg     string     `json:"msg"`
-	Message string     `json:"message"`
+	Code flexString `json:"code"`
+	// Ok acks (webhooks) additionally report whether the order was queued and
+	// whether it was a duplicate of an already accepted submission:
+	// {"ok":true,"queued":true,"duplicate":false}  -> accepted
+	// {"ok":true,"queued":false,"duplicate":true}  -> already submitted (success)
+	// {"ok":true,"queued":false,"duplicate":false} -> accepted but dropped
+	Ok        bool   `json:"ok"`
+	Queued    *bool  `json:"queued"`
+	Duplicate *bool  `json:"duplicate"`
+	Success   bool   `json:"success"`
+	Errno     string `json:"errno"`
+	Msg       string `json:"msg"`
+	Message   string `json:"message"`
 }
 
 func (b bizResponse) isSuccess() bool {
-	if b.Code == "000000" || b.Success || b.Ok {
+	if b.Ok {
+		// "ok" alone is not enough: an ack that was neither queued nor a
+		// duplicate means the upstream silently dropped the order, so it must
+		// not be reported as success.
+		if b.Queued != nil && !*b.Queued && !(b.Duplicate != nil && *b.Duplicate) {
+			return false
+		}
+		return true
+	}
+	if b.Code == "000000" || b.Success {
 		return true
 	}
 	if b.Errno == "200" || strings.EqualFold(strings.TrimSpace(b.Msg), "success") {
@@ -201,22 +238,26 @@ func isAccountUnavailableCode(code string) bool {
 	return code == "100002001" || code == "93420004"
 }
 
-func binanceTimeIncrement(period string) string {
+// binanceTimeIncrement maps a period onto the Binance event-contract time
+// increment. The second return value is false when the period has no supported
+// mapping: callers must not fall back to a default contract, otherwise the
+// order would be placed on the wrong product.
+func binanceTimeIncrement(period string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(period)) {
 	case "5m":
-		return "FIVE_MINUTE"
+		return "FIVE_MINUTE", true
 	case "15m":
-		return "FIFTEEN_MINUTE"
+		return "FIFTEEN_MINUTE", true
 	case "30m":
-		return "THIRTY_MINUTE"
+		return "THIRTY_MINUTE", true
 	case "1h":
-		return "ONE_HOUR"
+		return "ONE_HOUR", true
 	case "2h":
-		return "TWO_HOUR"
+		return "TWO_HOUR", true
 	case "4h":
-		return "FOUR_HOUR"
+		return "FOUR_HOUR", true
 	default:
-		return "THIRTY_MINUTE"
+		return "", false
 	}
 }
 
@@ -281,10 +322,12 @@ func (c *Client) randomDelay(ctx context.Context, task config.TaskConfig) error 
 		delay += time.Duration(rand.Int63n(int64(spread) + 1))
 	}
 	c.logger.Info("order", fmt.Sprintf("task=[%s] binance random delay %s (config=%s)", task.Name, delay, task.RandomDelaySec))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(delay):
+	case <-timer.C:
 		return nil
 	}
 }
@@ -315,7 +358,14 @@ var turboFlowDefaultSymbols = map[string]map[string]string{
 	},
 }
 
+// urlOverrideForTests lets tests redirect a built-in account type to a local
+// httptest server. It is always empty in production.
+var urlOverrideForTests = map[string]string{}
+
 func defaultURLForType(accountType string) string {
+	if override := urlOverrideForTests[accountType]; override != "" {
+		return override
+	}
 	switch accountType {
 	case "hibt":
 		return "https://api.hibt0.com/option/option-order/place?v={{v}}"
@@ -391,6 +441,9 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		urlStr = task.APIUrl
 		headersStr = task.Headers
 	}
+	// Pre-substitution body: JSON validity is only enforced for templates that
+	// are meant to be JSON documents.
+	bodyTemplate := bodyStr
 
 	bizPf := task.Auth["biz-pf"]
 	symParams := task.Symbols[req.Symbol]
@@ -416,52 +469,69 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 			returnRate = symParams["return_rate"]
 		}
 	}
-	binanceTime := binanceTimeIncrement(req.Period)
+	binanceTime, binanceTimeKnown := binanceTimeIncrement(req.Period)
+	if !binanceTimeKnown {
+		if task.Type == "binance" {
+			err := fmt.Errorf("binance: unsupported period %q (supported: 5m, 15m, 30m, 1h, 2h, 4h); refusing to place an order on an unknown time increment", req.Period)
+			c.logger.Error("order", fmt.Sprintf("task=[%s] %v", task.Name, err))
+			return err
+		}
+		// Non-binance templates only carry this as an opaque placeholder; keep
+		// the historical value there since no contract depends on it.
+		binanceTime = "THIRTY_MINUTE"
+	}
 
-	bodyStr = strings.ReplaceAll(bodyStr, "{{amount}}", req.Amount)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{unit}}", req.Unit)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{action}}", actVal)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{symbol}}", req.Symbol)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{hibt_symbol}}", hibtSym)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{v}}", v)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{tickerType}}", req.TickerType)
+	// Values substituted into the body are JSON-escaped so a signal-supplied
+	// value (e.g. Amount) cannot break out of its string literal and rewrite
+	// other order fields. Numeric positions stay valid for numeric input and
+	// turn garbage into a malformed body that is rejected before sending.
+	bodyStr = strings.ReplaceAll(bodyStr, "{{amount}}", jsonEscape(req.Amount))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{unit}}", jsonEscape(req.Unit))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{action}}", jsonEscape(actVal))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{symbol}}", jsonEscape(req.Symbol))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{hibt_symbol}}", jsonEscape(hibtSym))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{v}}", jsonEscape(v))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{tickerType}}", jsonEscape(req.TickerType))
 	// Alias for backward compatibility
-	bodyStr = strings.ReplaceAll(bodyStr, "{{direction}}", actVal)
+	bodyStr = strings.ReplaceAll(bodyStr, "{{direction}}", jsonEscape(actVal))
 	// Strategy/platform period fields
-	bodyStr = strings.ReplaceAll(bodyStr, "{{period}}", strings.TrimSpace(req.Period))
-	bodyStr = strings.ReplaceAll(bodyStr, "{{duration}}", duration)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{timeUnit}}", periodToMinutes(req.Period))
-	bodyStr = strings.ReplaceAll(bodyStr, "{{binance_time}}", binanceTime)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{account_id}}", accountID)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{uid}}", accountID)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{biz_pf}}", bizPf)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{coin_code}}", coinCode)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{pair_id}}", pairID)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{pool_id}}", poolID)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{return_rate}}", returnRate)
-	bodyStr = strings.ReplaceAll(bodyStr, "{{token}}", authToken)
+	bodyStr = strings.ReplaceAll(bodyStr, "{{period}}", jsonEscape(strings.TrimSpace(req.Period)))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{duration}}", jsonEscape(duration))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{timeUnit}}", jsonEscape(periodToMinutes(req.Period)))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{binance_time}}", jsonEscape(binanceTime))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{account_id}}", jsonEscape(accountID))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{uid}}", jsonEscape(accountID))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{biz_pf}}", jsonEscape(bizPf))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{coin_code}}", jsonEscape(coinCode))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{pair_id}}", jsonEscape(pairID))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{pool_id}}", jsonEscape(poolID))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{return_rate}}", jsonEscape(returnRate))
+	bodyStr = strings.ReplaceAll(bodyStr, "{{token}}", jsonEscape(authToken))
 
-	urlStr = strings.ReplaceAll(urlStr, "{{amount}}", req.Amount)
-	urlStr = strings.ReplaceAll(urlStr, "{{unit}}", req.Unit)
-	urlStr = strings.ReplaceAll(urlStr, "{{action}}", actVal)
-	urlStr = strings.ReplaceAll(urlStr, "{{symbol}}", req.Symbol)
-	urlStr = strings.ReplaceAll(urlStr, "{{hibt_symbol}}", hibtSym)
+	// URL placeholders are query-string values: escape them uniformly. Built-in
+	// templates only use {{v}} in the query, no placeholder sits in the
+	// path/authority, so nothing is escaped twice.
+	urlStr = strings.ReplaceAll(urlStr, "{{amount}}", url.QueryEscape(req.Amount))
+	urlStr = strings.ReplaceAll(urlStr, "{{unit}}", url.QueryEscape(req.Unit))
+	urlStr = strings.ReplaceAll(urlStr, "{{action}}", url.QueryEscape(actVal))
+	urlStr = strings.ReplaceAll(urlStr, "{{symbol}}", url.QueryEscape(req.Symbol))
+	urlStr = strings.ReplaceAll(urlStr, "{{hibt_symbol}}", url.QueryEscape(hibtSym))
 	urlStr = strings.ReplaceAll(urlStr, "{{v}}", url.QueryEscape(v))
-	urlStr = strings.ReplaceAll(urlStr, "{{tickerType}}", req.TickerType)
+	urlStr = strings.ReplaceAll(urlStr, "{{tickerType}}", url.QueryEscape(req.TickerType))
 	// Alias for backward compatibility
-	urlStr = strings.ReplaceAll(urlStr, "{{direction}}", actVal)
-	urlStr = strings.ReplaceAll(urlStr, "{{period}}", strings.TrimSpace(req.Period))
-	urlStr = strings.ReplaceAll(urlStr, "{{duration}}", duration)
-	urlStr = strings.ReplaceAll(urlStr, "{{timeUnit}}", periodToMinutes(req.Period))
-	urlStr = strings.ReplaceAll(urlStr, "{{binance_time}}", binanceTime)
-	urlStr = strings.ReplaceAll(urlStr, "{{account_id}}", accountID)
-	urlStr = strings.ReplaceAll(urlStr, "{{uid}}", accountID)
-	urlStr = strings.ReplaceAll(urlStr, "{{biz_pf}}", bizPf)
-	urlStr = strings.ReplaceAll(urlStr, "{{coin_code}}", coinCode)
-	urlStr = strings.ReplaceAll(urlStr, "{{pair_id}}", pairID)
-	urlStr = strings.ReplaceAll(urlStr, "{{pool_id}}", poolID)
-	urlStr = strings.ReplaceAll(urlStr, "{{return_rate}}", returnRate)
-	urlStr = strings.ReplaceAll(urlStr, "{{token}}", authToken)
+	urlStr = strings.ReplaceAll(urlStr, "{{direction}}", url.QueryEscape(actVal))
+	urlStr = strings.ReplaceAll(urlStr, "{{period}}", url.QueryEscape(strings.TrimSpace(req.Period)))
+	urlStr = strings.ReplaceAll(urlStr, "{{duration}}", url.QueryEscape(duration))
+	urlStr = strings.ReplaceAll(urlStr, "{{timeUnit}}", url.QueryEscape(periodToMinutes(req.Period)))
+	urlStr = strings.ReplaceAll(urlStr, "{{binance_time}}", url.QueryEscape(binanceTime))
+	urlStr = strings.ReplaceAll(urlStr, "{{account_id}}", url.QueryEscape(accountID))
+	urlStr = strings.ReplaceAll(urlStr, "{{uid}}", url.QueryEscape(accountID))
+	urlStr = strings.ReplaceAll(urlStr, "{{biz_pf}}", url.QueryEscape(bizPf))
+	urlStr = strings.ReplaceAll(urlStr, "{{coin_code}}", url.QueryEscape(coinCode))
+	urlStr = strings.ReplaceAll(urlStr, "{{pair_id}}", url.QueryEscape(pairID))
+	urlStr = strings.ReplaceAll(urlStr, "{{pool_id}}", url.QueryEscape(poolID))
+	urlStr = strings.ReplaceAll(urlStr, "{{return_rate}}", url.QueryEscape(returnRate))
+	urlStr = strings.ReplaceAll(urlStr, "{{token}}", url.QueryEscape(authToken))
 
 	method := "POST"
 	if task.Type == "raw" && strings.TrimSpace(task.Method) != "" {
@@ -531,6 +601,26 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		strategyPart = fmt.Sprintf(" strategy=[%s]", req.Strategy)
 	}
 
+	// An order body that references the amount must not be sent with an empty
+	// amount: in a quoted position that still produces valid JSON
+	// (`"amount":""`), so the JSON check below would not catch it.
+	if task.Type != "raw" && strings.Contains(bodyTemplate, "{{amount}}") && strings.TrimSpace(req.Amount) == "" {
+		c.logger.Error("order", fmt.Sprintf("%stask=[%s]%s refusing to send order with an empty amount (symbol=%s period=%q)",
+			tag, task.Name, strategyPart, req.Symbol, req.Period))
+		return fmt.Errorf("refusing to send %s order with an empty amount (symbol=%s period=%q)", task.Type, req.Symbol, req.Period)
+	}
+
+	// Refuse to send a JSON-bodied order whose substitutions produced invalid
+	// JSON (e.g. an empty amount/period leaving `"duration":,`). Nothing is sent
+	// in that case: a malformed body would otherwise be answered with an opaque
+	// 4xx/5xx or, worse, be accepted partially.
+	if task.Type != "raw" && strings.HasPrefix(strings.TrimSpace(bodyTemplate), "{") && !json.Valid([]byte(bodyStr)) {
+		c.logger.Error("order", fmt.Sprintf("%stask=[%s]%s refusing to send malformed order body (period=%q amount=%q): %s",
+			tag, task.Name, strategyPart, req.Period, req.Amount, bodyStr))
+		return fmt.Errorf("refusing to send malformed %s order body (invalid JSON after substitution, period=%q amount=%q): %s",
+			task.Type, req.Period, req.Amount, bodyStr)
+	}
+
 	c.logger.Info("order", fmt.Sprintf("%stask=[%s]%s START %s %s\nBody: %s",
 		tag, task.Name, strategyPart, method, urlStr, bodyStr))
 
@@ -556,13 +646,15 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		if attempt > 0 {
 			delay := time.Second
 			c.logger.Info("order", fmt.Sprintf("%stask=[%s] retry %d/%d after %v", tag, task.Name, attempt, maxRetries-1, delay))
+			timer := time.NewTimer(delay)
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				if sawRetryable {
 					return fmt.Errorf("%w: context deadline exceeded after retryable error retries", ErrRetryExhausted)
 				}
 				return ctx.Err()
-			case <-time.After(delay):
+			case <-timer.C:
 			}
 			// Reset request body for retry
 			httpReq.Body = io.NopCloser(strings.NewReader(bodyStr))
@@ -604,10 +696,22 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 					return fmt.Errorf("%w: binance error code=%s", ErrAccountUnavailable, string(bizResp.Code))
 				}
 				// Other business error — don't retry
-				c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s", tag, task.Name, string(bizResp.Code)))
-				return fmt.Errorf("binance error code=%s", string(bizResp.Code))
+				c.logger.Error("order", fmt.Sprintf("%stask=[%s] business error code=%s msg=%q message=%q", tag, task.Name, string(bizResp.Code), bizResp.Msg, bizResp.Message))
+				return fmt.Errorf("business error code=%s msg=%q message=%q", string(bizResp.Code), bizResp.Msg, bizResp.Message)
 			}
-			return nil
+			// A 2xx whose body is not a JSON business response (WAF/HTML page,
+			// empty or truncated body, unexpected field types) proves nothing:
+			// only raw webhook tasks accept an arbitrary 2xx body as success.
+			if task.Type == "raw" {
+				return nil
+			}
+			snippet := respBody
+			if len(snippet) > 200 {
+				snippet = snippet[:200]
+			}
+			c.logger.Error("order", fmt.Sprintf("%stask=[%s] unparseable 2xx response status=%d body=%q, not treating as success",
+				tag, task.Name, resp.StatusCode, string(snippet)))
+			return fmt.Errorf("unexpected 2xx response with unparseable body (type=%s status=%d body=%q)", task.Type, resp.StatusCode, string(snippet))
 		}
 
 		var bizResp bizResponse

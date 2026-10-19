@@ -123,8 +123,14 @@ async function loadBalances() {
   if (tagsEl) tagsEl.innerHTML = renderBalanceTags(data || {}, balanceTasks);
 }
 
+// 有余额来源的平台：必须与后端 balance.FetchAll 支持的账号类型保持一致，
+// 否则账号即使拉到了余额，页面也不会展示（也不会计入总额）。
+function hasBalanceSource(type) {
+  return type === "binance" || type === "turboflow" || type === "hibt";
+}
+
 function enabledBalanceTasks() {
-  return (stateTasks || []).filter(t => t.enabled && (t.type === "binance" || t.type === "turboflow"));
+  return (stateTasks || []).filter(t => t.enabled && hasBalanceSource(t.type));
 }
 
 function renderBalanceTags(data, tasks) {
@@ -293,7 +299,9 @@ function n(t) {
     expiresAt: +t.expiresAt||0,
     apiUrl: String(t.apiUrl||""), method: String(t.method||"POST").toUpperCase(),
     headers: String(t.headers||""), body: String(t.body||""),
-    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||"") };
+    valueBuy: String(t.valueBuy||""), valueSell: String(t.valueSell||""),
+    skipSignals: Math.max(0, parseInt(t.skipSignals, 10) || 0),
+    allowedSymbols: String(t.allowedSymbols||"").trim() };
 }
 
 function defaultTask() { return n({ id:rid("acct"), name:"New Account", enabled:true, valueBuy:"LONG", valueSell:"SHORT" }); }
@@ -395,7 +403,7 @@ function card(t, idx) {
         <span class="inline-flex items-center justify-center w-6 h-6 text-[11px] font-bold rounded" style="background:var(--gl);color:var(--gt)">#${idx}</span>
         <input class="border rounded px-2 py-1 text-xs font-semibold w-28" data-field="name" value="${esc(t.name)}" />
         ${platformBadge(t.type)}
-        ${(t.enabled && (t.type === "binance" || t.type === "turboflow")) ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
+        ${(t.enabled && hasBalanceSource(t.type)) ? `<span id="balance-${id}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">--</span>` : ""}
         <span id="countdown-${id}" class="countdown hidden"></span>
         <label class="switch-label"><span class="switch"><input type="checkbox" data-field="enabled" ${t.enabled?"checked":""} /><span class="switch-track"></span></span></label>
       </div>
@@ -432,6 +440,12 @@ function card(t, idx) {
       <div class="sm:col-span-2"><label class="block text-[11px] text-gray-500 mb-0.5">Headers</label><textarea class="border rounded w-full px-2 py-1 text-xs font-mono resize-y" rows="3" data-field="headers" placeholder="Key: Value">${esc(t.headers)}</textarea></div>
       <div class="sm:col-span-2"><label class="block text-[11px] text-gray-500 mb-0.5">Body</label><textarea class="border rounded w-full px-2 py-1 text-xs font-mono resize-y" rows="3" data-field="body" placeholder='{"key":"{{action}}"}'>${esc(t.body)}</textarea></div>
     </div>` : ""}
+
+    <!-- Row: signal filtering -->
+    <div class="flex gap-2 items-end">
+      <div style="width:8rem"><label class="block text-[11px] text-gray-500 mb-0.5">跳过信号数</label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="skipSignals" value="${esc(t.skipSignals||0)}" placeholder="0" /></div>
+      <div class="flex-1"><label class="block text-[11px] text-gray-500 mb-0.5">允许的 symbol <span class="text-gray-400">(逗号分隔，留空=全部)</span></label><input class="border rounded w-full px-2 py-1 text-xs font-mono" data-field="allowedSymbols" value="${esc(t.allowedSymbols||"")}" placeholder="如 BTCUSDT,ETHUSDT" /></div>
+    </div>
 
     <!-- Row: Time ranges -->
     <div class="flex gap-2 items-start">
@@ -496,7 +510,12 @@ function collectTasks() {
       timeRanges: colTR(card), expiresAt:+g("expiresAt")||0,
       apiUrl: String(g("apiUrl")||"").trim(), method: String(g("method")||"POST").trim().toUpperCase(),
       headers: String(g("headers")||""), body: String(g("body")||""),
-      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim() };
+      valueBuy: String(g("valueBuy")||"").trim(), valueSell: String(g("valueSell")||"").trim(),
+      // These must round-trip: the server replaces the whole tasks array on
+      // save, so omitting them would silently reset the per-account signal
+      // filter (allowedSymbols) and the skip-counter (skipSignals).
+      skipSignals: Math.max(0, parseInt(g("skipSignals"), 10) || 0),
+      allowedSymbols: String(g("allowedSymbols")||"").trim() };
   });
 }
 
@@ -523,7 +542,11 @@ function ng(g) {
   g = g || {};
   let accounts = [];
   if (Array.isArray(g.accounts)) {
-    accounts = g.accounts.map(a => ({ accountId: String(a.accountId||""), amount: String(a.amount||"").trim() }));
+    accounts = g.accounts.map(a => ({ accountId: String(a.accountId||""), amount: String(a.amount||"").trim(),
+      percent: a.percent != null ? String(a.percent) : "",
+      minAmount: a.minAmount != null ? String(a.minAmount) : "",
+      maxAmount: a.maxAmount != null ? String(a.maxAmount) : "",
+      priority: a.priority ? String(a.priority) : "" }));
   } else if (Array.isArray(g.accountIds)) {
     accounts = g.accountIds.map(id => ({ accountId: String(id), amount: "" }));
   }
@@ -562,12 +585,13 @@ function strategyCard(s, idx) {
 }
 
 function groupHtml(g) {
-  const opts = ["random","weighted","round-robin","all"].map(m=>`<option ${g.dispatch===m?"selected":""}>${m}</option>`).join("");
+  const opts = [["random","random"],["weighted","weighted"],["round-robin","round-robin(顺序)"],["all","all"]]
+    .map(([v,l])=>`<option value="${v}" ${g.dispatch===v?"selected":""}>${l}</option>`).join("");
   const rows = stateTasks.length
     ? stateTasks.map(t=>{
         const binding = (g.accounts||[]).find(a => a.accountId === t.id) || { amount: "" };
         const checked = (g.accounts||[]).some(a => a.accountId === t.id) ? "checked" : "";
-        return `<div class="flex items-center gap-1.5"><input type="checkbox" data-group-account="${esc(t.id)}" ${checked} /><span class="text-[11px] text-gray-600">${esc(t.name)}</span><input class="border rounded px-1.5 py-0.5 text-[11px]" style="width:4rem" data-group-amount="${esc(t.id)}" value="${esc(binding.amount)}" placeholder="金额" /></div>`;
+        return `<div class="flex items-center gap-1.5"><input type="checkbox" data-group-account="${esc(t.id)}" ${checked} /><span class="text-[11px] text-gray-600">${esc(t.name)}</span><input class="border rounded px-1.5 py-0.5 text-[11px]" style="width:3.5rem" placeholder="优先级" title="分组内优先级：数值越大越优先；顺序轮询时同级账号轮流使用，低优先级仅在失败时兜底" data-group-priority="${esc(t.id)}" value="${esc(binding.priority ?? "")}" /><input class="border rounded px-1.5 py-0.5 text-[11px] bg-amber-50" style="width:3rem" placeholder="%" title="动态仓位百分比：金额 = 该账户可用额 × 此百分比（留空=沿用右侧固定金额）" data-group-percent="${esc(t.id)}" value="${esc(binding.percent ?? "")}" /><input class="border rounded px-1.5 py-0.5 text-[11px]" style="width:3.5rem" placeholder="最小仓位" title="最小仓位：当 百分比×可用额 低于此值时，按此金额下单" data-group-minamount="${esc(t.id)}" value="${esc(binding.minAmount ?? "")}" /><input class="border rounded px-1.5 py-0.5 text-[11px]" style="width:3.5rem" placeholder="最大仓位" title="最大仓位：金额上限（留空=不限制）" data-group-maxamount="${esc(t.id)}" value="${esc(binding.maxAmount ?? "")}" /><input class="border rounded px-1.5 py-0.5 text-[11px]" style="width:4rem" data-group-amount="${esc(t.id)}" value="${esc(binding.amount)}" placeholder="金额" /></div>`;
       }).join("")
     : '<span class="text-[11px] text-gray-400">暂无账号，请先在账号库添加</span>';
   return `<div class="border rounded p-2 bg-gray-50" data-group-card data-group-id="${g.id}">
@@ -623,8 +647,26 @@ function collectStrategies() {
       const gchk = f => { const e = gcrd.querySelector(`[data-field="${f}"]`); return !!(e && e.checked); };
       const accounts = [...gcrd.querySelectorAll('[data-group-account]')].filter(c => c.checked).map(c => {
         const aid = c.getAttribute("data-group-account");
+        // Read an optional numeric field; a blank or non-numeric entry means
+        // "not configured" instead of leaking NaN into the saved config.
+        const num = sel => {
+          const el = gcrd.querySelector(sel);
+          const raw = String(el?.value ?? "").trim();
+          if (raw === "") return null;
+          const v = Number(raw);
+          return Number.isFinite(v) ? v : null;
+        };
         const amt = gcrd.querySelector(`[data-group-amount="${cssEscape(aid)}"]`);
-        return { accountId: aid, amount: String(amt?.value || "").trim() };
+        const row = { accountId: aid, amount: String(amt?.value || "").trim() };
+        const pct = num(`[data-group-percent="${cssEscape(aid)}"]`);
+        const min = num(`[data-group-minamount="${cssEscape(aid)}"]`);
+        const max = num(`[data-group-maxamount="${cssEscape(aid)}"]`);
+        const pri = num(`[data-group-priority="${cssEscape(aid)}"]`);
+        if (pct !== null) row.percent = pct;
+        if (min !== null) row.minAmount = min;
+        if (max !== null) row.maxAmount = max;
+        if (pri !== null) row.priority = Math.trunc(pri);
+        return row;
       });
       return { id: gid, name: String(gg("group-name")||"").trim()||gid, enabled: gchk("group-enabled"), dispatch: String(gg("group-dispatch")||"random").trim()||"random", accounts };
     });

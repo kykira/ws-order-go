@@ -14,7 +14,28 @@ type TimeRange struct {
 }
 
 func PrepareTasks(tasks []TaskConfig) error {
+	// Reserve every explicitly configured ID first so a generated ID can never
+	// collide with one the operator set by hand.
+	used := make(map[string]bool, len(tasks))
 	for i := range tasks {
+		if id := strings.TrimSpace(tasks[i].ID); id != "" {
+			used[id] = true
+		}
+	}
+
+	for i := range tasks {
+		if strings.TrimSpace(tasks[i].ID) == "" {
+			// Preserve the historical task-<index> naming, but skip IDs that
+			// are already taken instead of silently duplicating them.
+			for n := i + 1; ; n++ {
+				candidate := fmt.Sprintf("task-%d", n)
+				if !used[candidate] {
+					tasks[i].ID = candidate
+					used[candidate] = true
+					break
+				}
+			}
+		}
 		normalizeTask(&tasks[i], i)
 		if err := validateTask(tasks[i]); err != nil {
 			name := tasks[i].Name
@@ -22,6 +43,102 @@ func PrepareTasks(tasks []TaskConfig) error {
 				name = fmt.Sprintf("task-%d", i+1)
 			}
 			return fmt.Errorf("task[%d] %q invalid: %w", i+1, name, err)
+		}
+	}
+
+	// Duplicate IDs are not just cosmetic: task.ID keys the skip counters and
+	// the balance map, so two accounts sharing an ID would share that state.
+	seen := make(map[string]int, len(tasks))
+	for i := range tasks {
+		if prev, dup := seen[tasks[i].ID]; dup {
+			return fmt.Errorf("task[%d] %q invalid: duplicate task id %q (also used by task[%d])",
+				i+1, tasks[i].Name, tasks[i].ID, prev+1)
+		}
+		seen[tasks[i].ID] = i
+	}
+	return nil
+}
+
+// validDispatch lists the dispatch modes understood by signals.Processor.
+var validDispatch = map[string]bool{
+	"random":      true,
+	"weighted":    true,
+	"round-robin": true,
+	"all":         true,
+}
+
+// NormalizeDispatch returns a dispatch mode the processor implements. Anything
+// empty or unrecognized falls back to "round-robin": signals.Processor treats
+// an unknown mode as "all" (an order on EVERY matched account), so a typo must
+// not silently fan out to all accounts.
+func NormalizeDispatch(mode string) string {
+	v := strings.ToLower(strings.TrimSpace(mode))
+	if validDispatch[v] {
+		return v
+	}
+	return "round-robin"
+}
+
+// PrepareStrategies validates strategy/group/account bindings. It runs on load
+// and on every update so the API can never persist a binding that would size
+// an order unsafely.
+func PrepareStrategies(strategies []StrategyConfig) error {
+	seenStrategy := make(map[string]bool, len(strategies))
+	seenGroup := make(map[string]bool)
+
+	for si := range strategies {
+		st := &strategies[si]
+		st.ID = strings.TrimSpace(st.ID)
+		st.Name = strings.TrimSpace(st.Name)
+		if st.Name == "" {
+			st.Name = st.ID
+		}
+		key := st.ID
+		if key == "" {
+			key = st.Name
+		}
+		if key == "" {
+			return fmt.Errorf("strategy[%d] must have an id or name", si+1)
+		}
+		if seenStrategy[key] {
+			return fmt.Errorf("duplicate strategy id %q", key)
+		}
+		seenStrategy[key] = true
+
+		for gi := range st.Groups {
+			g := &st.Groups[gi]
+			g.Dispatch = NormalizeDispatch(g.Dispatch)
+			g.ID = strings.TrimSpace(g.ID)
+			if g.ID == "" {
+				g.ID = fmt.Sprintf("%s-g%d", key, gi+1)
+			}
+			if seenGroup[g.ID] {
+				return fmt.Errorf("duplicate group id %q", g.ID)
+			}
+			seenGroup[g.ID] = true
+
+			for ai := range g.Accounts {
+				a := &g.Accounts[ai]
+				a.AccountID = strings.TrimSpace(a.AccountID)
+				a.Amount = strings.TrimSpace(a.Amount)
+				if a.AccountID == "" {
+					return fmt.Errorf("group[%s] account[%d] is missing accountId", g.ID, ai+1)
+				}
+				// percent is a share of the account's available balance. Cap it
+				// at 100% so a typo cannot size an order far beyond the account.
+				if a.Percent < 0 || a.Percent > 100 {
+					return fmt.Errorf("group[%s] account[%s] percent must be between 0 and 100 (got %g)",
+						g.ID, a.AccountID, a.Percent)
+				}
+				if a.MinAmount < 0 || a.MaxAmount < 0 {
+					return fmt.Errorf("group[%s] account[%s] minAmount/maxAmount cannot be negative",
+						g.ID, a.AccountID)
+				}
+				if a.MinAmount > 0 && a.MaxAmount > 0 && a.MinAmount > a.MaxAmount {
+					return fmt.Errorf("group[%s] account[%s] minAmount %g is greater than maxAmount %g",
+						g.ID, a.AccountID, a.MinAmount, a.MaxAmount)
+				}
+			}
 		}
 	}
 	return nil
@@ -45,8 +162,8 @@ func normalizeTimeRanges(ranges []TimeRange) []TimeRange {
 
 	out := make([]TimeRange, 0, len(ranges))
 	for _, tr := range ranges {
-		start := strings.TrimSpace(tr.Start)
-		end := strings.TrimSpace(tr.End)
+		start := canonicalClock(strings.TrimSpace(tr.Start))
+		end := canonicalClock(strings.TrimSpace(tr.End))
 		if start == "" && end == "" {
 			continue
 		}
@@ -140,6 +257,21 @@ func minuteInRange(currentMinute, startMinute, endMinute int) bool {
 		return currentMinute >= startMinute && currentMinute <= endMinute
 	}
 	return currentMinute >= startMinute || currentMinute <= endMinute
+}
+
+// canonicalClock rewrites a parseable clock value into the canonical HH:MM
+// form. time.Parse accepts single-digit hours ("9:00"), which the web UI
+// rejects, so without this a hand-edited config would load but then be
+// impossible to save from the UI.
+func canonicalClock(value string) string {
+	if value == "" {
+		return ""
+	}
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		return value
+	}
+	return parsed.Format("15:04")
 }
 
 func parseClockMinute(value string) (int, error) {

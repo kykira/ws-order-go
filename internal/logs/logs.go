@@ -90,17 +90,23 @@ func (l *Logger) appendToFile(filename, line string) {
 	// For now, we put it in the current working directory.
 	dir := "data"
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		// Report on stderr instead of through the logger: logging here would
+		// recurse straight back into this function. Staying silent used to hide
+		// the loss of every audit line.
+		fmt.Fprintf(os.Stderr, "logs: cannot create %s: %v\n", dir, err)
 		return
 	}
 
 	filePath := filepath.Join(dir, filename)
 	f, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "logs: cannot open %s: %v\n", filePath, err)
 		return
 	}
 	defer f.Close()
 
 	if _, err := f.WriteString(line); err != nil {
+		fmt.Fprintf(os.Stderr, "logs: cannot write %s: %v\n", filePath, err)
 		return
 	}
 }

@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kykira/ws-order-go/internal/config"
@@ -56,6 +59,14 @@ type Processor struct {
 	mu            sync.Mutex
 	seenSkip      map[string]int
 	skipStartTime map[string]time.Time
+	// rrCursor 是顺序轮询的游标（key = group:<id> 或 legacy）。
+	rrCursor map[string]int
+
+	// orders counts in-flight order goroutines so shutdown can wait for them.
+	// An atomic counter is used instead of sync.WaitGroup because a connection
+	// that is still winding down may call Handle (and therefore Add) while
+	// Stop is already waiting, which is illegal for WaitGroup reuse.
+	orders atomic.Int64
 }
 
 func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.Client, balanceProviders ...BalanceProvider) *Processor {
@@ -70,6 +81,7 @@ func NewProcessor(cfg *config.Manager, logger *logs.Logger, orderClient *order.C
 		balanceProvider: bp,
 		seenSkip:        make(map[string]int),
 		skipStartTime:   make(map[string]time.Time),
+		rrCursor:        make(map[string]int),
 	}
 }
 
@@ -163,8 +175,21 @@ func (p *Processor) pickWeightedGroupAccount(matched []groupAccountMatch) groupA
 	return matched[weightedIndex(p.weightsForTasks(tasks))]
 }
 
-// Stop is kept for API compatibility. There is no background slot loop anymore.
-func (p *Processor) Stop() {}
+// Stop waits (bounded) for in-flight order goroutines so a graceful shutdown
+// does not cut an order request in half. There is no background slot loop
+// anymore; it is safe to call more than once.
+func (p *Processor) Stop() {
+	p.WaitOrders(5 * time.Second)
+}
+
+// WaitOrders blocks until in-flight order goroutines finish or the timeout
+// expires, whichever comes first.
+func (p *Processor) WaitOrders(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for p.orders.Load() > 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 
 // Handle 处理一条信号。applySkip 表示是否应用 skipSignals 逻辑。
 func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
@@ -237,7 +262,15 @@ func (p *Processor) Handle(source string, sig Signal, applySkip bool) error {
 
 	default: // "all" or empty
 		for _, task := range matched {
-			p.executeTask(source, sig, task, action, amount, unit, sig.Period, matchedRange)
+			amt := amount
+			// Each account may carry its own configured amount, so resolve it
+			// per account instead of reusing the first match for everyone.
+			if strings.TrimSpace(sig.Amount) == "" {
+				if v := p.amountForTask(cfg, task.ID); v != "" {
+					amt = v
+				}
+			}
+			p.executeTask(source, sig, task, action, amt, unit, sig.Period, matchedRange)
 		}
 	}
 
@@ -267,15 +300,67 @@ func (p *Processor) dispatchWeighted(source string, sig Signal, matched []config
 	p.logger.Info("signal", fmt.Sprintf("dispatch=weighted picked account=[%s]", task.Name))
 }
 
-// dispatchRoundRobin picks the first matched account in config order.
+// dispatchRoundRobin rotates through the matched accounts in config order
+// (legacy flat mode has no per-group priorities).
 func (p *Processor) dispatchRoundRobin(source string, sig Signal, matched []config.TaskConfig, action, amount, unit, matchedRange string) {
 	if len(matched) == 0 {
 		return
 	}
 
-	task := matched[0]
-	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s]", task.Name))
+	idx := p.nextRoundRobinIndex("legacy", len(matched))
+	task := matched[idx]
+	p.logger.Info("signal", fmt.Sprintf("dispatch=round-robin account=[%s] index=%d/%d", task.Name, idx+1, len(matched)))
 	p.executeTaskWithFallback(source, sig, task, matched, action, amount, unit, sig.Period, matchedRange, nil)
+}
+
+// nextRoundRobinIndex returns the next cursor position for key and advances it.
+// The cursor is per group (and one for legacy dispatch), so independent groups
+// rotate independently and concurrently.
+func (p *Processor) nextRoundRobinIndex(key string, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.rrCursor == nil {
+		p.rrCursor = make(map[string]int)
+	}
+	idx := p.rrCursor[key] % n
+	if idx < 0 {
+		idx += n
+	}
+	p.rrCursor[key] = (idx + 1) % n
+	return idx
+}
+
+// sortByPriority orders matches by descending priority, keeping the configured
+// order for equal priorities so fallback also tries the preferred account first.
+func sortByPriority(matched []groupAccountMatch) {
+	sort.SliceStable(matched, func(i, j int) bool {
+		return matched[i].priority > matched[j].priority
+	})
+}
+
+// pickRoundRobinGroupAccount rotates through the accounts sharing the highest
+// priority. Lower-priority accounts are never picked here: they are only used as
+// fallback when the preferred ones fail (order limit, expired login, ...).
+func (p *Processor) pickRoundRobinGroupAccount(groupID string, matched []groupAccountMatch) groupAccountMatch {
+	top := matched[0].priority
+	for _, m := range matched[1:] {
+		if m.priority > top {
+			top = m.priority
+		}
+	}
+
+	tier := make([]groupAccountMatch, 0, len(matched))
+	for _, m := range matched {
+		if m.priority == top {
+			tier = append(tier, m)
+		}
+	}
+
+	idx := p.nextRoundRobinIndex("group:"+groupID, len(tier))
+	return tier[idx]
 }
 
 func (p *Processor) checkSkip(task config.TaskConfig) bool {
@@ -344,12 +429,76 @@ func (p *Processor) amountForTask(cfg config.Config, accountID string) string {
 		for _, g := range st.Groups {
 			for _, a := range g.Accounts {
 				if a.AccountID == accountID {
-					return strings.TrimSpace(a.Amount)
+					if amt, ok := p.dynamicAmount(a); ok {
+						return amt
+					}
+					return ""
 				}
 			}
 		}
 	}
 	return ""
+}
+
+// formatAmount renders an amount with the single decimal place the dynamic
+// sizing feature promises.
+func formatAmount(v float64) string {
+	return strconv.FormatFloat(math.Round(v*10)/10, 'f', 1, 64)
+}
+
+// dynamicAmount resolves the order amount for one group binding.
+//
+//	percent unset → the static amount (unchanged legacy behaviour)
+//	percent set   → balance × percent%, floored at minAmount and capped at
+//	                maxAmount. When the percentage lands below minAmount the
+//	                configured minimum position is used instead.
+//
+// ok is false when dynamic sizing is configured but no safe amount can be
+// determined. The caller must then SKIP the account: emitting a zero or empty
+// amount would submit an order with an invalid size.
+func (p *Processor) dynamicAmount(a config.StrategyGroupAccountConfig) (string, bool) {
+	if a.Percent <= 0 {
+		return strings.TrimSpace(a.Amount), true
+	}
+
+	bal := 0.0
+	known := false
+	if p.balanceProvider != nil {
+		bal, known = p.balanceProvider.GetFuturesBalances()[a.AccountID]
+	}
+
+	// An unknown balance happens before the first fetch completes, after a
+	// failed fetch, and for account types the balance service does not cover at
+	// all. Never size an order from it; fall back to the floor, then to the
+	// static amount, and only then give up.
+	if !known || bal <= 0 {
+		if a.MinAmount > 0 {
+			p.logger.Info("signal", fmt.Sprintf("amount: account=[%s] balance unavailable, using minAmount=%.1f", a.AccountID, a.MinAmount))
+			return formatAmount(a.MinAmount), true
+		}
+		if amt := strings.TrimSpace(a.Amount); amt != "" {
+			p.logger.Info("signal", fmt.Sprintf("amount: account=[%s] balance unavailable, falling back to amount=%s", a.AccountID, amt))
+			return amt, true
+		}
+		p.logger.Error("signal", fmt.Sprintf("amount: account=[%s] balance unavailable and no minAmount/amount configured, skipping order", a.AccountID))
+		return "", false
+	}
+
+	amt := bal * a.Percent / 100.0
+	if a.MinAmount > 0 && amt < a.MinAmount {
+		// The configured minimum position wins when the percentage is small.
+		amt = a.MinAmount
+	}
+	if a.MaxAmount > 0 && amt > a.MaxAmount {
+		amt = a.MaxAmount
+	}
+	if amt <= 0 {
+		p.logger.Error("signal", fmt.Sprintf("amount: account=[%s] computed amount is not positive (balance=%.2f percent=%.2f%%), skipping order", a.AccountID, bal, a.Percent))
+		return "", false
+	}
+	p.logger.Info("signal", fmt.Sprintf("amount: account=[%s] balance=%.2f percent=%.2f%% => %.1f",
+		a.AccountID, bal, a.Percent, amt))
+	return formatAmount(amt), true
 }
 
 func (p *Processor) accountByID(tasks []config.TaskConfig, id string) (config.TaskConfig, bool) {
@@ -362,8 +511,9 @@ func (p *Processor) accountByID(tasks []config.TaskConfig, id string) (config.Ta
 }
 
 type groupAccountMatch struct {
-	task   config.TaskConfig
-	amount string
+	task     config.TaskConfig
+	amount   string
+	priority int
 }
 
 func (p *Processor) groupMatchedAccounts(sig Signal, action string, tasks []config.TaskConfig, group config.StrategyGroupConfig, applySkip bool) []groupAccountMatch {
@@ -383,9 +533,15 @@ func (p *Processor) groupMatchedAccounts(sig Signal, action string, tasks []conf
 			continue
 		}
 		allowed, _ := p.taskMatches(sig, action, task, applySkip)
-		if allowed {
-			matched = append(matched, groupAccountMatch{task: task, amount: strings.TrimSpace(binding.Amount)})
+		if !allowed {
+			continue
 		}
+		amount, ok := p.dynamicAmount(binding)
+		if !ok {
+			p.logger.Error("signal", fmt.Sprintf("group=[%s] account=[%s] amount unavailable, skip", group.Name, task.Name))
+			continue
+		}
+		matched = append(matched, groupAccountMatch{task: task, amount: amount, priority: binding.Priority}) // ★ 动态金额/优先级
 	}
 	return matched
 }
@@ -415,6 +571,9 @@ func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.Task
 		return
 	}
 
+	// 高优先级在前；同优先级保持配置顺序，兜底也按这个顺序尝试。
+	sortByPriority(matched)
+
 	amountFor := func(t config.TaskConfig) string {
 		for _, m := range matched {
 			if m.task.ID == t.ID {
@@ -442,8 +601,8 @@ func (p *Processor) dispatchGroup(source string, sig Signal, tasks []config.Task
 		}
 
 	case "round-robin":
-		m := matched[0]
-		p.logger.Info("signal", fmt.Sprintf("dispatch=group round-robin strategy=[%s] group=[%s] account=[%s]", sig.Strategy, group.Name, m.task.Name))
+		m := p.pickRoundRobinGroupAccount(group.ID, matched)
+		p.logger.Info("signal", fmt.Sprintf("dispatch=group round-robin strategy=[%s] group=[%s] account=[%s] priority=%d", sig.Strategy, group.Name, m.task.Name, m.priority))
 		p.executeTaskWithFallback(source, sig, m.task, matchedTasks, action, amountFor(m.task), unit, period, "", amountFor)
 
 	case "weighted":
@@ -564,13 +723,15 @@ func (p *Processor) placeOrderWithOdds(ctx context.Context, task config.TaskConf
 	defer timer.Stop()
 
 	for {
-		// Re-check before blocking; this also covers updates that arrived
-		// between the previous check and Updates().
+		// Subscribe BEFORE reading the state. Updates() hands out a channel
+		// that is closed and replaced on every push, so checking the odds first
+		// would miss an update landing in the gap and then block on the fresh,
+		// still-open channel until the timeout below.
+		updates := p.oddsProvider.Updates()
 		if rate := p.currentDirectionOdds(req); rate >= threshold {
 			p.logger.Info("order", fmt.Sprintf("account=[%s] odds reached action=%s symbol=%s period=%s rate=%.4f threshold=%.4f", task.Name, req.Action, req.Symbol, req.Period, rate, threshold))
 			return place()
 		}
-		updates := p.oddsProvider.Updates()
 
 		select {
 		case <-ctx.Done():
@@ -591,7 +752,9 @@ func (p *Processor) placeOrderWithOdds(ctx context.Context, task config.TaskConf
 func (p *Processor) executeTask(source string, sig Signal, task config.TaskConfig, action, amount, unit, period, matchedRange string) {
 	p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] action=%s symbol=%s amount=%s unit=%s period=%s timeRange=%s", source, sig.OrderID, sig.Strategy, task.Name, action, sig.Symbol, amount, unit, period, matchedRange))
 
+	p.orders.Add(1)
 	go func(t config.TaskConfig, req order.PlaceOrderRequest) {
+		defer p.orders.Add(-1)
 		ctx, cancel := context.WithTimeout(context.Background(), p.orderTimeout(t))
 		defer cancel()
 
@@ -634,7 +797,9 @@ func (p *Processor) executeTaskWithFallback(source string, sig Signal, primary c
 		Strategy:   sig.Strategy,
 	}
 
+	p.orders.Add(1)
 	go func(t config.TaskConfig, r order.PlaceOrderRequest) {
+		defer p.orders.Add(-1)
 		ctx, cancel := context.WithTimeout(context.Background(), p.orderTimeout(t))
 		defer cancel()
 

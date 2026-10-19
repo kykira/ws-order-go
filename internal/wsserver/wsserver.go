@@ -49,6 +49,25 @@ func (s *Server) ConnCount() int64 {
 	return s.connCount.Load()
 }
 
+// CloseAll closes every inbound signal connection. http.Server.Shutdown does
+// not touch hijacked (WebSocket) connections, so this must be called during
+// graceful shutdown or the process would exit while sockets are still open.
+func (s *Server) CloseAll() {
+	s.connMu.Lock()
+	conns := make([]*websocket.Conn, 0, len(s.conns))
+	for conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	s.connMu.Unlock()
+
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+	if len(conns) > 0 {
+		s.logger.Info("wsserver", fmt.Sprintf("closed %d connection(s) on shutdown", len(conns)))
+	}
+}
+
 func (s *Server) addConn(conn *websocket.Conn) {
 	s.connMu.Lock()
 	s.conns[conn] = struct{}{}

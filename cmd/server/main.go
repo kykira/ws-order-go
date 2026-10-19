@@ -59,27 +59,50 @@ func main() {
 	mux.HandleFunc("/api/logs/stream", handleLogsStream(logger))
 	mux.HandleFunc("/api/login", handleLogin(cfgManager))
 
-	// WS server endpoint — path is configurable
+	// The WS signal endpoint is resolved on every request so toggling
+	// wsServer.enabled (or editing its path) takes effect without a restart,
+	// and so a path colliding with an existing route can never panic the mux.
 	cfg := cfgManager.Get()
-	wsPath := cfg.WSServer.Path
-	if wsPath == "" {
-		wsPath = "/ws"
-	}
 	if cfg.WSServer.Enabled {
-		mux.HandleFunc(wsPath, wsSrv.HandleWS)
+		wsPath := cfg.WSServer.Path
+		if wsPath == "" {
+			wsPath = "/ws"
+		}
 		logger.Info("main", fmt.Sprintf("WS server listening on %s", wsPath))
 	}
 
 	fileServer := http.FileServer(http.Dir("web"))
-	mux.Handle("/", fileServer)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		ws := cfgManager.Get().WSServer
+		wsPath := ws.Path
+		if wsPath == "" {
+			wsPath = "/ws"
+		}
+		if ws.Enabled && r.URL.Path == wsPath {
+			wsSrv.HandleWS(w, r)
+			return
+		}
+		// 静态文件每次都协商缓存：app.js 改动后普通刷新即可生效，不会被
+		// 浏览器按启发式规则长期缓存住（未改动时仍然返回 304）。
+		w.Header().Set("Cache-Control", "no-cache")
+		fileServer.ServeHTTP(w, r)
+	})
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	port := cfg.Server.Port
+	if port == 0 {
+		port = 9946
+	}
+	addr := fmt.Sprintf(":%d", port)
 
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      authMiddleware(mux, cfgManager),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
+		// Slowloris protection: a stalled header read must not hold a
+		// connection (and its file descriptor) indefinitely.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	serverErrCh := make(chan error, 1)
@@ -101,12 +124,19 @@ func main() {
 	}
 
 	logger.Info("main", "shutting down...")
+	// Stop accepting new signals first, then release the background services.
+	wsSrv.CloseAll()
 	wsMgr.StopAll()
-	processor.Stop()
+	balanceSvc.Stop()
+	tfRealtime.Stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+
+	// Let order requests that were already submitted finish instead of cutting
+	// them off mid-flight.
+	processor.Stop()
 }
 
 // authMiddleware 保护 /api/* 接口（登录接口除外）。静态页面与 WS 信号端点不在此列。
@@ -141,6 +171,7 @@ func handleLogin(cfgMgr *config.Manager) http.HandlerFunc {
 		var payload struct {
 			Password string `json:"password"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"invalid json"}`))
@@ -212,6 +243,7 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.M
 				Tasks      []config.TaskConfig     `json:"tasks"`
 				Strategies []config.StrategyConfig `json:"strategies"`
 			}
+			r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(`{"error":"invalid json"}`))
@@ -224,18 +256,29 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.M
 			if payload.Strategies == nil {
 				payload.Strategies = []config.StrategyConfig{}
 			}
-			if err := config.PrepareTasks(payload.Tasks); err != nil {
+
+			// Validate and normalize the whole payload (dispatch included)
+			// before touching the live config, so a typo can never be
+			// persisted and then silently interpreted as "order on all".
+			next := config.Config{
+				Upstreams:  payload.Upstreams,
+				WSServer:   payload.WSServer,
+				Dispatch:   payload.Dispatch,
+				Tasks:      payload.Tasks,
+				Strategies: payload.Strategies,
+			}
+			if err := config.Prepare(&next); err != nil {
 				logger.Error("config", fmt.Sprintf("reject invalid config payload: %v", err))
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = w.Write([]byte(fmt.Sprintf(`{"error":%q}`, err.Error())))
 				return
 			}
 			if err := cfgMgr.Update(func(c *config.Config) {
-				c.Upstreams = payload.Upstreams
-				c.WSServer = payload.WSServer
-				c.Dispatch = payload.Dispatch
-				c.Tasks = payload.Tasks
-				c.Strategies = payload.Strategies
+				c.Upstreams = next.Upstreams
+				c.WSServer = next.WSServer
+				c.Dispatch = next.Dispatch
+				c.Tasks = next.Tasks
+				c.Strategies = next.Strategies
 			}); err != nil {
 				logger.Error("config", fmt.Sprintf("update config error: %v", err))
 				w.WriteHeader(http.StatusInternalServerError)
@@ -256,33 +299,58 @@ func handleConfig(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.M
 }
 
 func handleWSConnect(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		_ = cfgMgr.Update(func(c *config.Config) {
-			// Multi-upstream: Sync will handle
-		})
-		logger.Info("wsclient", "manual connect requested")
-		wsMgr.Sync()
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	}
+	return setUpstreamsEnabled(cfgMgr, logger, wsMgr, true, "connect")
 }
 
 func handleWSDisconnect(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager) http.HandlerFunc {
+	return setUpstreamsEnabled(cfgMgr, logger, wsMgr, false, "disconnect")
+}
+
+// setUpstreamsEnabled turns one upstream (or every upstream when no id is
+// given) on or off, persists the change and resyncs. The previous handlers were
+// byte-identical no-ops that rewrote config.json and reported success without
+// changing anything, so "disconnect" could never disconnect.
+func setUpstreamsEnabled(cfgMgr *config.Manager, logger *logs.Logger, wsMgr *wsclient.Manager, enabled bool, verb string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		_ = cfgMgr.Update(func(c *config.Config) {
-			// Multi-upstream: Sync will handle
+
+		var payload struct {
+			ID string `json:"id"`
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+			_ = json.NewDecoder(r.Body).Decode(&payload) // body is optional
+		}
+		id := strings.TrimSpace(payload.ID)
+
+		changed := 0
+		err := cfgMgr.Update(func(c *config.Config) {
+			for i := range c.Upstreams {
+				if id != "" && c.Upstreams[i].ID != id {
+					continue
+				}
+				c.Upstreams[i].Enabled = enabled
+				changed++
+			}
 		})
-		logger.Info("wsclient", "manual disconnect requested")
+		if err != nil {
+			logger.Error("wsclient", fmt.Sprintf("manual %s failed: %v", verb, err))
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"save failed"}`))
+			return
+		}
+		if id != "" && changed == 0 {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"upstream not found"}`))
+			return
+		}
+
+		logger.Info("wsclient", fmt.Sprintf("manual %s requested (id=%q, upstreams=%d)", verb, id, changed))
 		wsMgr.Sync()
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}
 }
@@ -318,6 +386,7 @@ func handleTestTask(cfgMgr *config.Manager, logger *logs.Logger, orderClient *or
 			Symbol string `json:"symbol"`
 			Period string `json:"period"`
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"invalid json"}`))
@@ -402,13 +471,21 @@ func handleLogsStream(logger *logs.Logger) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
+		// The server's 15s WriteTimeout would otherwise kill this long-lived
+		// stream (and make the UI reload the whole log pane every 15s).
+		if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+			logger.Debug("main", fmt.Sprintf("cannot clear write deadline for log stream: %v", err))
+		}
+
+		// Subscribe BEFORE replaying history, so an entry logged during the
+		// replay cannot fall into the gap between snapshot and subscription.
+		ch, cancel := logger.AddListener()
+		defer cancel()
+
 		for _, e := range logger.Entries() {
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", e.JSON())
 		}
 		flusher.Flush()
-
-		ch, cancel := logger.AddListener()
-		defer cancel()
 
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()

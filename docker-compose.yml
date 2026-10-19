@@ -8,6 +8,9 @@ services:
     network_mode: host
     environment:
       - WSORDER_PORT=9946
+      # 时段(timeRanges)按进程时区判断，余额快照也固定用 Asia/Shanghai，
+      # 不设置的话容器跑在 UTC，所有交易时段会整体偏移 8 小时。
+      - TZ=Asia/Shanghai
     volumes:
       # 持久化配置文件
       - ./config.json:/app/config.json
