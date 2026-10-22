@@ -849,6 +849,7 @@ func (p *Processor) tryFallbackOrder(source string, sig Signal, matched []config
 		}
 		r := req
 		r.Amount = amt
+		r.Source = "fallback"
 
 		p.logger.Info("signal", fmt.Sprintf("source=%s orderID=%v strategy=[%s] account=[%s] fallback attempt=%d/%d after order limit symbol=%s amount=%s unit=%s", source, sig.OrderID, sig.Strategy, task.Name, attempt+1, maxFallbackOrderAttempts, sig.Symbol, amt, req.Unit))
 

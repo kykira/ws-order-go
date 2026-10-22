@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
 	"github.com/kykira/ws-order-go/internal/order"
+	"github.com/kykira/ws-order-go/internal/orders"
 	"github.com/kykira/ws-order-go/internal/signals"
 	"github.com/kykira/ws-order-go/internal/tfrealtime"
 	"github.com/kykira/ws-order-go/internal/wsclient"
@@ -31,7 +33,9 @@ func main() {
 	logger := logs.NewLogger(500)
 	logger.Info("main", "starting ws-order bridge service")
 
+	orderStore := orders.NewStore(500)
 	orderClient := order.NewClient(logger)
+	orderClient.SetRecorder(orderStore)
 	balanceSvc := balance.NewService(cfgManager, logger)
 	tfRealtime := tfrealtime.NewService(cfgManager, logger)
 	processor := signals.NewProcessor(cfgManager, logger, orderClient, balanceSvc)
@@ -50,6 +54,7 @@ func main() {
 
 	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsMgr, wsSrv, orderClient))
 	mux.HandleFunc("/api/balances", handleBalances(balanceSvc))
+	mux.HandleFunc("/api/orders", handleOrders(orderStore))
 	mux.HandleFunc("/api/balances/summary", handleBalancesSummary(balanceSvc))
 	mux.HandleFunc("/api/tf/realtime", handleTFRealtime(tfRealtime))
 	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsMgr))
@@ -202,6 +207,24 @@ func handleBalances(svc *balance.Service) http.HandlerFunc {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(svc.GetBalances())
+	}
+}
+
+// handleOrders serves the order-record table data, newest first.
+func handleOrders(store *orders.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		limit := 200
+		if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		_ = json.NewEncoder(w).Encode(store.List(limit))
 	}
 }
 

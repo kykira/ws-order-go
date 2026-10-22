@@ -19,6 +19,7 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 	"github.com/kykira/ws-order-go/internal/config"
 	"github.com/kykira/ws-order-go/internal/logs"
+	"github.com/kykira/ws-order-go/internal/orders"
 )
 
 // ErrRetryExhausted indicates the exchange rejected the order with a retryable
@@ -39,6 +40,9 @@ type Client struct {
 	logger      *logs.Logger
 	clientsMu   sync.RWMutex
 	httpClients map[string]tls_client.HttpClient
+
+	// recorder is optional and set once at startup; it feeds the order table.
+	recorder *orders.Store
 }
 
 func NewClient(logger *logs.Logger) *Client {
@@ -46,6 +50,12 @@ func NewClient(logger *logs.Logger) *Client {
 		logger:      logger,
 		httpClients: make(map[string]tls_client.HttpClient),
 	}
+}
+
+// SetRecorder attaches the order-record store used by the web panel. Set it
+// before any order is placed.
+func (c *Client) SetRecorder(store *orders.Store) {
+	c.recorder = store
 }
 
 type PlaceOrderRequest struct {
@@ -57,6 +67,18 @@ type PlaceOrderRequest struct {
 	Period     string
 	Strategy   string
 	IsTest     bool
+	Source     string // "" normal, "fallback", "test"
+}
+
+// recordSource labels a record without duplicating the caller's bookkeeping.
+func recordSource(req PlaceOrderRequest) string {
+	if req.Source != "" {
+		return req.Source
+	}
+	if req.IsTest {
+		return "test"
+	}
+	return ""
 }
 
 func parsePeriodUnit(period string) (value int, unit byte, ok bool) {
@@ -407,7 +429,7 @@ func defaultHeadersForType(task config.TaskConfig) string {
 	}
 }
 
-func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req PlaceOrderRequest) error {
+func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req PlaceOrderRequest) (err error) {
 	// Binance accounts may configure a random delay before the order is sent.
 	if err := c.randomDelay(ctx, task); err != nil {
 		return err
@@ -621,6 +643,33 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 			task.Type, req.Period, req.Amount, bodyStr)
 	}
 
+	// Record every real send attempt for the panel's order table.
+	recorder := c.recorder
+	var recordID int64
+	if recorder != nil {
+		recordID = recorder.Begin(orders.Record{
+			Account:  task.Name,
+			TaskID:   task.ID,
+			Strategy: req.Strategy,
+			Action:   req.Action,
+			Symbol:   req.Symbol,
+			Period:   req.Period,
+			Amount:   req.Amount,
+			Platform: task.Type,
+			Source:   recordSource(req),
+		})
+		defer func() {
+			recorder.Update(recordID, func(r *orders.Record) {
+				if err == nil {
+					r.Status = orders.StatusSuccess
+					return
+				}
+				r.Status = orders.StatusFailed
+				r.Error = err.Error()
+			})
+		}()
+	}
+
 	c.logger.Info("order", fmt.Sprintf("%stask=[%s]%s START %s %s\nBody: %s",
 		tag, task.Name, strategyPart, method, urlStr, bodyStr))
 
@@ -660,13 +709,18 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 			httpReq.Body = io.NopCloser(strings.NewReader(bodyStr))
 		}
 
-		resp, err := httpClient.Do(httpReq)
-		if err != nil {
-			if sawRetryable && errors.Is(err, context.DeadlineExceeded) {
+		if recorder != nil {
+			recorder.Update(recordID, func(r *orders.Record) {
+				r.Attempts = attempt + 1
+			})
+		}
+		resp, doErr := httpClient.Do(httpReq)
+		if doErr != nil {
+			if sawRetryable && errors.Is(doErr, context.DeadlineExceeded) {
 				return fmt.Errorf("%w: http request deadline exceeded after retryable error retries", ErrRetryExhausted)
 			}
-			c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error (attempt %d): %v", tag, task.Name, attempt+1, err))
-			return err
+			c.logger.Error("order", fmt.Sprintf("%stask=[%s] http error (attempt %d): %v", tag, task.Name, attempt+1, doErr))
+			return doErr
 		}
 
 		respBody, _ := io.ReadAll(resp.Body)
@@ -674,17 +728,36 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		lastRespBody = respBody
 		lastStatusCode = resp.StatusCode
 
+		if recorder != nil {
+			recorder.Update(recordID, func(r *orders.Record) {
+				r.HTTPStatus = resp.StatusCode
+			})
+		}
+
 		c.logger.Info("order", fmt.Sprintf("%stask=[%s]%s FINISH status=%d\nResponse: %s", tag, task.Name, strategyPart, resp.StatusCode, string(respBody)))
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var bizResp bizResponse
 			if json.Unmarshal(respBody, &bizResp) == nil {
+				if recorder != nil {
+					msg := bizResp.Msg
+					if msg == "" {
+						msg = bizResp.Message
+					}
+					recorder.Update(recordID, func(r *orders.Record) {
+						r.Code = string(bizResp.Code)
+						r.Message = msg
+					})
+				}
 				if bizResp.Code == "93420018" {
 					c.logger.Info("order", fmt.Sprintf("%stask=[%s] order-number limit reached, fallback to another account", tag, task.Name))
 					return fmt.Errorf("%w: binance error code=%s", ErrOrderLimitReached, string(bizResp.Code))
 				}
 				if bizResp.Errno == "1021110" || (task.Type == "hibt" && (isHIBTHoldingLimit(bizResp) || isHIBTDuplicateOperation(bizResp))) {
 					sawRetryable = true
+					if recorder != nil {
+						recorder.Update(recordID, func(r *orders.Record) { r.Status = orders.StatusRetrying })
+					}
 					c.logger.Info("order", fmt.Sprintf("%stask=[%s] retryable error code=%s errno=%s, will retry", tag, task.Name, bizResp.Code, bizResp.Errno))
 					continue
 				}
@@ -715,9 +788,21 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 		}
 
 		var bizResp bizResponse
-		if json.Unmarshal(respBody, &bizResp) == nil && isAccountUnavailableCode(string(bizResp.Code)) {
-			c.logger.Error("order", fmt.Sprintf("%stask=[%s] account unavailable/expired status=%d code=%s", tag, task.Name, resp.StatusCode, string(bizResp.Code)))
-			return fmt.Errorf("%w: status=%d binance error code=%s", ErrAccountUnavailable, resp.StatusCode, string(bizResp.Code))
+		if json.Unmarshal(respBody, &bizResp) == nil {
+			if recorder != nil {
+				msg := bizResp.Msg
+				if msg == "" {
+					msg = bizResp.Message
+				}
+				recorder.Update(recordID, func(r *orders.Record) {
+					r.Code = string(bizResp.Code)
+					r.Message = msg
+				})
+			}
+			if isAccountUnavailableCode(string(bizResp.Code)) {
+				c.logger.Error("order", fmt.Sprintf("%stask=[%s] account unavailable/expired status=%d code=%s", tag, task.Name, resp.StatusCode, string(bizResp.Code)))
+				return fmt.Errorf("%w: status=%d binance error code=%s", ErrAccountUnavailable, resp.StatusCode, string(bizResp.Code))
+			}
 		}
 
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)

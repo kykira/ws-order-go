@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", async () => {
   if (!(await ensureAuth())) return;
-  initConfig(); initActions(); initLogs();
+  initConfig(); initActions(); initLogs(); initOrders();
 });
 
 let stateTasks = [];
@@ -890,6 +890,84 @@ function appendLog(entry) {
   container.appendChild(row);
   while (container.children.length > 500) container.removeChild(container.firstChild);
   container.scrollTop = container.scrollHeight;
+}
+
+// ── Orders table ──
+
+let lastOrdersHash = "";
+
+function initOrders() {
+  document.querySelectorAll("[data-log-tab]").forEach(btn => {
+    btn.addEventListener("click", () => switchLogTab(btn.getAttribute("data-log-tab")));
+  });
+  refreshOrders().catch(console.error);
+  setInterval(() => refreshOrders().catch(console.error), 2000);
+}
+
+function switchLogTab(tab) {
+  const showOrders = tab !== "logs";
+  document.getElementById("orders-panel")?.classList.toggle("hidden", !showOrders);
+  document.getElementById("logs-panel")?.classList.toggle("hidden", showOrders);
+  document.querySelectorAll("[data-log-tab]").forEach(b => {
+    b.classList.toggle("log-tab-active", b.getAttribute("data-log-tab") === (showOrders ? "orders" : "logs"));
+  });
+  if (!showOrders) {
+    const c = document.getElementById("log-container");
+    if (c) c.scrollTop = c.scrollHeight;
+  }
+}
+
+async function refreshOrders() {
+  const list = await apiGet("/api/orders?limit=200");
+  const arr = Array.isArray(list) ? list : [];
+  const hash = JSON.stringify(arr);
+  if (hash === lastOrdersHash) return;
+  lastOrdersHash = hash;
+  renderOrders(arr);
+}
+
+function renderOrders(list) {
+  const body = document.getElementById("orders-body");
+  if (!body) return;
+  if (!list.length) {
+    body.innerHTML = `<tr><td colspan="9" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>`;
+    return;
+  }
+  const statusMap = {
+    success: ["bg-emerald-50 text-emerald-700 border-emerald-200", "成功"],
+    failed: ["bg-red-50 text-red-600 border-red-200", "失败"],
+    retrying: ["bg-amber-50 text-amber-700 border-amber-200", "重试中"],
+    pending: ["bg-gray-50 text-gray-500 border-gray-200", "进行中"],
+  };
+  const actionMap = { buy: "买", sell: "卖" };
+  body.innerHTML = list.map(r => {
+    const st = statusMap[r.status] || statusMap.pending;
+    const d = r.time ? new Date(r.time) : null;
+    const time = d
+      ? `${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")} ${d.toLocaleTimeString("zh-CN", { hour12: false })}`
+      : "--";
+    const detail = r.error || r.message || (r.httpStatus ? `HTTP ${r.httpStatus}` : "");
+    const extra = [
+      r.taskId ? `task=${r.taskId}` : "",
+      r.platform || "",
+      r.attempts ? `attempts=${r.attempts}` : "",
+      r.source ? `source=${r.source}` : "",
+      typeof r.durationMs === "number" ? `${r.durationMs}ms` : "",
+    ].filter(Boolean).join(" · ");
+    const title = [extra, detail].filter(Boolean).join("\n");
+    const action = actionMap[String(r.action || "").toLowerCase()] || r.action || "";
+    return `<tr class="border-t border-gray-100 hover:bg-gray-50">
+      <td class="px-2 py-1 text-gray-500 whitespace-nowrap">${esc(time)}</td>
+      <td class="px-2 py-1 font-medium whitespace-nowrap">${esc(r.account)}</td>
+      <td class="px-2 py-1 text-gray-600 whitespace-nowrap">${esc(r.strategy)}</td>
+      <td class="px-2 py-1 whitespace-nowrap">${esc(action)}</td>
+      <td class="px-2 py-1 whitespace-nowrap">${esc(r.symbol)}</td>
+      <td class="px-2 py-1 text-gray-600 whitespace-nowrap">${esc(r.period)}</td>
+      <td class="px-2 py-1 font-mono whitespace-nowrap">${esc(r.amount)}</td>
+      <td class="px-2 py-1 whitespace-nowrap"><span class="inline-flex rounded-full border px-1.5 py-px text-[10px] ${st[0]}">${st[1]}</span></td>
+      <td class="px-2 py-1 text-gray-600 max-w-[24rem] truncate" title="${esc(title)}">${esc(detail)}</td>
+    </tr>`;
+  }).join("");
 }
 
 // ── Toast ──

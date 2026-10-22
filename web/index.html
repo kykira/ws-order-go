@@ -17,6 +17,9 @@
   .log-box { height:16rem;overflow-y:auto;font-family:ui-monospace,monospace;font-size:.6875rem;line-height:1.6;background:#f9fafb;border:1px solid #e5e7eb;border-radius:.375rem;padding:.5rem; }
   .log-box::-webkit-scrollbar { width:5px; }
   .log-box::-webkit-scrollbar-thumb { background:rgba(139,195,74,.6);border-radius:9999px; }
+  .log-tab { font-size:.6875rem;padding:.15rem .55rem;border-radius:.25rem;color:#6b7280;background:transparent; }
+  .log-tab:hover { background:#f3f4f6; }
+  .log-tab-active { background:#f3f4f6;color:#111827;font-weight:600; }
   .time-range-empty { padding:.25rem .5rem;border:1px dashed #d1d5db;border-radius:.25rem;font-size:.75rem;color:#6b7280;background:#f9fafb;line-height:1; }
   .countdown { font-size:.6875rem;font-weight:500;padding:.125rem .4rem;border-radius:.25rem; }
   .countdown-normal { background:var(--gl);color:var(--gt); }
@@ -181,13 +184,40 @@
     <div id="tasks-container" class="space-y-3"></div>
   </div>
 
-  <!-- Logs -->
+  <!-- Orders / Logs -->
   <div class="bg-white border rounded-lg p-3">
     <div class="flex items-center justify-between mb-1">
-      <h2 class="text-xs font-semibold">日志</h2>
-      <span class="text-[10px] text-gray-400">最近500条</span>
+      <div class="flex items-center gap-1">
+        <button id="tab-orders" class="log-tab log-tab-active" data-log-tab="orders">订单记录</button>
+        <button id="tab-logs" class="log-tab" data-log-tab="logs">原始日志</button>
+      </div>
+      <span class="text-[10px] text-gray-400">最近 200 单</span>
     </div>
-    <div id="log-container" class="log-box"></div>
+    <div id="orders-panel">
+      <div class="overflow-auto rounded border" style="max-height:20rem">
+        <table class="w-full text-[11px] border-collapse">
+          <thead class="bg-gray-50 sticky top-0 z-10">
+            <tr class="text-gray-500 text-left">
+              <th class="px-2 py-1 font-medium whitespace-nowrap">时间</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">账号</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">策略</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">方向</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">品种</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">周期</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">金额</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">状态</th>
+              <th class="px-2 py-1 font-medium">说明</th>
+            </tr>
+          </thead>
+          <tbody id="orders-body">
+            <tr><td colspan="9" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="logs-panel" class="hidden">
+      <div id="log-container" class="log-box"></div>
+    </div>
   </div>
 
 </main>
