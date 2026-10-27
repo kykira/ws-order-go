@@ -939,7 +939,16 @@ function renderOrders(list) {
     retrying: ["bg-amber-50 text-amber-700 border-amber-200", "重试中"],
     pending: ["bg-gray-50 text-gray-500 border-gray-200", "进行中"],
   };
-  const actionMap = { buy: "买", sell: "卖" };
+  const actionBadge = (action) => {
+    const a = String(action || "").toLowerCase();
+    if (a === "buy") {
+      return `<span class="inline-flex items-center gap-0.5 rounded px-1.5 py-px text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">▲ 买涨</span>`;
+    }
+    if (a === "sell") {
+      return `<span class="inline-flex items-center gap-0.5 rounded px-1.5 py-px text-[10px] font-semibold bg-red-50 text-red-600 border border-red-200">▼ 买跌</span>`;
+    }
+    return `<span class="inline-flex items-center rounded px-1.5 py-px text-[10px] bg-gray-50 text-gray-600 border border-gray-200">${esc(action || "--")}</span>`;
+  };
   body.innerHTML = list.map(r => {
     const st = statusMap[r.status] || statusMap.pending;
     const d = r.time ? new Date(r.time) : null;
@@ -955,12 +964,12 @@ function renderOrders(list) {
       typeof r.durationMs === "number" ? `${r.durationMs}ms` : "",
     ].filter(Boolean).join(" · ");
     const title = [extra, detail].filter(Boolean).join("\n");
-    const action = actionMap[String(r.action || "").toLowerCase()] || r.action || "";
+    const action = actionBadge(r.action);
     return `<tr class="border-t border-gray-100 hover:bg-gray-50">
       <td class="px-2 py-1 text-gray-500 whitespace-nowrap">${esc(time)}</td>
       <td class="px-2 py-1 font-medium whitespace-nowrap">${esc(r.account)}</td>
       <td class="px-2 py-1 text-gray-600 whitespace-nowrap">${esc(r.strategy)}</td>
-      <td class="px-2 py-1 whitespace-nowrap">${esc(action)}</td>
+      <td class="px-2 py-1 whitespace-nowrap">${action}</td>
       <td class="px-2 py-1 whitespace-nowrap">${esc(r.symbol)}</td>
       <td class="px-2 py-1 text-gray-600 whitespace-nowrap">${esc(r.period)}</td>
       <td class="px-2 py-1 font-mono whitespace-nowrap">${esc(r.amount)}</td>
