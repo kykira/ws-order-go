@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -33,7 +34,7 @@ func main() {
 	logger := logs.NewLogger(500)
 	logger.Info("main", "starting ws-order bridge service")
 
-	orderStore := orders.NewStore(500)
+	orderStore := orders.NewPersistentStore(200, filepath.Join("data", "orders.json"))
 	orderClient := order.NewClient(logger)
 	orderClient.SetRecorder(orderStore)
 	balanceSvc := balance.NewService(cfgManager, logger)
@@ -142,6 +143,7 @@ func main() {
 	// Let order requests that were already submitted finish instead of cutting
 	// them off mid-flight.
 	processor.Stop()
+	orderStore.Close() // final snapshot of the order table
 }
 
 // authMiddleware 保护 /api/* 接口（登录接口除外）。静态页面与 WS 信号端点不在此列。
