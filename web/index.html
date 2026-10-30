@@ -85,6 +85,7 @@
       <span class="text-[10px] text-gray-400">最近 200 单</span>
     </div>
     <div id="orders-panel">
+      <div id="settle-summary" class="text-[10px] text-gray-500 mb-1 leading-relaxed"></div>
       <div class="overflow-auto rounded border" style="max-height:20rem">
         <table class="w-full text-[11px] border-collapse">
           <thead class="bg-gray-50 sticky top-0 z-10">
@@ -97,11 +98,12 @@
               <th class="px-2 py-1 font-medium whitespace-nowrap">周期</th>
               <th class="px-2 py-1 font-medium whitespace-nowrap">金额</th>
               <th class="px-2 py-1 font-medium whitespace-nowrap">状态</th>
+              <th class="px-2 py-1 font-medium whitespace-nowrap">结果</th>
               <th class="px-2 py-1 font-medium">说明</th>
             </tr>
           </thead>
           <tbody id="orders-body">
-            <tr><td colspan="9" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>
+            <tr><td colspan="10" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>
           </tbody>
         </table>
       </div>

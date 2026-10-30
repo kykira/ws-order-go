@@ -9,8 +9,11 @@ package orders
 import (
 	"encoding/json"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -47,6 +50,12 @@ type Record struct {
 	Error      string    `json:"error,omitempty"`
 	Attempts   int       `json:"attempts"`
 	Source     string    `json:"source,omitempty"` // "" normal, "fallback", "test"
+
+	// Settlement (filled by the settle service for Binance event contracts).
+	// Result is "" (unknown/other platform), "pending", "win" or "loss".
+	Result    string     `json:"result,omitempty"`
+	Payout    float64    `json:"payout,omitempty"`
+	SettledAt *time.Time `json:"settledAt,omitempty"`
 }
 
 // diskFile is the on-disk envelope written to path.
@@ -149,6 +158,69 @@ func (s *Store) Update(id int64, fn func(*Record)) {
 			s.dirty = true
 			return
 		}
+	}
+}
+
+// FindMatch returns the nearest record for taskID/amount within window of at
+// that has not been won yet. "pending" and "loss" records stay matchable so a
+// payout arriving after a conservative loss deadline can still correct it.
+func (s *Store) FindMatch(taskID string, amount float64, at time.Time, window time.Duration) (int64, string, bool) {
+	if s == nil || window <= 0 {
+		return 0, "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	bestID := int64(0)
+	bestPeriod := ""
+	bestDiff := window
+	for _, r := range s.recs {
+		if r.TaskID != taskID {
+			continue
+		}
+		if r.Result != "" && r.Result != "pending" && r.Result != "loss" {
+			continue
+		}
+		v, err := strconv.ParseFloat(strings.TrimSpace(r.Amount), 64)
+		if err != nil || math.Abs(v-amount) > 0.01 {
+			continue
+		}
+		d := r.Time.Sub(at)
+		if d < 0 {
+			d = -d
+		}
+		if d <= bestDiff {
+			bestDiff = d
+			bestID = r.ID
+			bestPeriod = r.Period
+		}
+	}
+	return bestID, bestPeriod, bestID != 0
+}
+
+// SetResult records the settlement outcome on one order record. It does not
+// touch DurationMS: settlement happens long after the order request.
+func (s *Store) SetResult(id int64, result string, payout float64, settledAt time.Time) {
+	if s == nil || id == 0 || result == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := len(s.recs) - 1; i >= 0; i-- {
+		if s.recs[i].ID != id {
+			continue
+		}
+		s.recs[i].Result = result
+		s.recs[i].Payout = payout
+		if result == "pending" || settledAt.IsZero() {
+			s.recs[i].SettledAt = nil
+		} else {
+			t := settledAt
+			s.recs[i].SettledAt = &t
+		}
+		s.dirty = true
+		return
 	}
 }
 

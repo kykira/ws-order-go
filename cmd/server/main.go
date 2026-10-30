@@ -19,6 +19,7 @@ import (
 	"github.com/kykira/ws-order-go/internal/logs"
 	"github.com/kykira/ws-order-go/internal/order"
 	"github.com/kykira/ws-order-go/internal/orders"
+	"github.com/kykira/ws-order-go/internal/settle"
 	"github.com/kykira/ws-order-go/internal/signals"
 	"github.com/kykira/ws-order-go/internal/tfrealtime"
 	"github.com/kykira/ws-order-go/internal/wsclient"
@@ -39,6 +40,7 @@ func main() {
 	orderClient.SetRecorder(orderStore)
 	balanceSvc := balance.NewService(cfgManager, logger)
 	tfRealtime := tfrealtime.NewService(cfgManager, logger)
+	settleSvc := settle.NewService(cfgManager, logger, orderStore)
 	processor := signals.NewProcessor(cfgManager, logger, orderClient, balanceSvc)
 	processor.SetOddsProvider(tfRealtime)
 	wsMgr := wsclient.NewManager(cfgManager, logger, processor)
@@ -50,12 +52,15 @@ func main() {
 	balanceSvc.Start()
 	// 启动 TurboFlow 实时赔率（evt_cfg_*）订阅
 	tfRealtime.Start()
+	// 启动币安事件合约结算对账（胜负/盈亏）
+	settleSvc.Start()
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/config", handleConfig(cfgManager, logger, wsMgr, wsSrv, orderClient))
 	mux.HandleFunc("/api/balances", handleBalances(balanceSvc))
 	mux.HandleFunc("/api/orders", handleOrders(orderStore))
+	mux.HandleFunc("/api/settlements", handleSettlements(settleSvc))
 	mux.HandleFunc("/api/balances/summary", handleBalancesSummary(balanceSvc))
 	mux.HandleFunc("/api/tf/realtime", handleTFRealtime(tfRealtime))
 	mux.HandleFunc("/api/ws/connect", handleWSConnect(cfgManager, logger, wsMgr))
@@ -143,6 +148,7 @@ func main() {
 	// Let order requests that were already submitted finish instead of cutting
 	// them off mid-flight.
 	processor.Stop()
+	settleSvc.Stop()
 	orderStore.Close() // final snapshot of the order table
 }
 
@@ -227,6 +233,18 @@ func handleOrders(store *orders.Store) http.HandlerFunc {
 			}
 		}
 		_ = json.NewEncoder(w).Encode(store.List(limit))
+	}
+}
+
+// handleSettlements serves the Binance settlement stats (last 24h).
+func handleSettlements(svc *settle.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(svc.Snapshot())
 	}
 }
 

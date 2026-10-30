@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestStoreLifecycle(t *testing.T) {
@@ -200,5 +201,62 @@ func TestPersistentStoreKeepsAtMost200(t *testing.T) {
 	}
 	if list[0].Account != "a249" || list[199].Account != "a50" {
 		t.Fatalf("kept %q..%q, want a249..a50", list[0].Account, list[199].Account)
+	}
+}
+
+func TestFindMatchAndSetResult(t *testing.T) {
+	now := time.Now()
+	s := NewStore(10)
+
+	id := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "125", Period: "30m"})
+	s.Update(id, func(r *Record) { r.Time = now.Add(-time.Second) })
+
+	// Wrong amount, task or time window must not match.
+	if _, _, ok := s.FindMatch("bn1", 100, now, 30*time.Second); ok {
+		t.Fatal("matched a different amount")
+	}
+	if _, _, ok := s.FindMatch("bn2", 125, now, 30*time.Second); ok {
+		t.Fatal("matched a different task")
+	}
+	if _, _, ok := s.FindMatch("bn1", 125, now.Add(time.Hour), 30*time.Second); ok {
+		t.Fatal("matched outside the window")
+	}
+
+	gotID, period, ok := s.FindMatch("bn1", 125, now, 30*time.Second)
+	if !ok || gotID != id || period != "30m" {
+		t.Fatalf("FindMatch = %d/%q/%v, want %d/30m/true", gotID, period, ok, id)
+	}
+
+	s.SetResult(id, "win", 231.25, now)
+	rec := s.List(1)[0]
+	if rec.Result != "win" || rec.Payout != 231.25 || rec.SettledAt == nil {
+		t.Fatalf("settled record = %+v", rec)
+	}
+	if _, _, ok := s.FindMatch("bn1", 125, now, 30*time.Second); ok {
+		t.Fatal("a settled record must not be matched again")
+	}
+
+	// pending records stay matchable for a later update.
+	id2 := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "50", Period: "30m"})
+	s.Update(id2, func(r *Record) { r.Time = now })
+	s.SetResult(id2, "pending", 0, time.Time{})
+	if got, _, ok := s.FindMatch("bn1", 50, now, 30*time.Second); !ok || got != id2 {
+		t.Fatalf("pending record should remain matchable, got %d/%v", got, ok)
+	}
+	if rec := s.List(1)[0]; rec.SettledAt != nil {
+		t.Fatalf("pending record must not carry a settledAt: %+v", rec)
+	}
+
+	// A premature loss stays matchable so a later payout can correct it to win.
+	id3 := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "75", Period: "30m"})
+	s.Update(id3, func(r *Record) { r.Time = now })
+	s.SetResult(id3, "loss", 0, now)
+	got3, _, ok := s.FindMatch("bn1", 75, now, 30*time.Second)
+	if !ok || got3 != id3 {
+		t.Fatalf("loss record should remain matchable for correction, got %d/%v", got3, ok)
+	}
+	s.SetResult(got3, "win", 138.75, now)
+	if rec := s.List(1)[0]; rec.Result != "win" || rec.Payout != 138.75 {
+		t.Fatalf("corrected record = %+v", rec)
 	}
 }

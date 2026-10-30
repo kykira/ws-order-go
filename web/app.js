@@ -902,6 +902,8 @@ function initOrders() {
   });
   refreshOrders().catch(console.error);
   setInterval(() => refreshOrders().catch(console.error), 2000);
+  refreshSettlements().catch(console.error);
+  setInterval(() => refreshSettlements().catch(console.error), 10000);
 }
 
 function switchLogTab(tab) {
@@ -930,7 +932,7 @@ function renderOrders(list) {
   const body = document.getElementById("orders-body");
   if (!body) return;
   if (!list.length) {
-    body.innerHTML = `<tr><td colspan="9" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>`;
     return;
   }
   const statusMap = {
@@ -949,6 +951,18 @@ function renderOrders(list) {
     }
     return `<span class="inline-flex items-center rounded px-1.5 py-px text-[10px] bg-gray-50 text-gray-600 border border-gray-200">${esc(action || "--")}</span>`;
   };
+  const resultBadge = (r) => {
+    switch (r.result) {
+      case "win":
+        return `<span class="inline-flex rounded-full border px-1.5 py-px text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">赢</span>`;
+      case "loss":
+        return `<span class="inline-flex rounded-full border px-1.5 py-px text-[10px] bg-red-50 text-red-600 border-red-200">输</span>`;
+      case "pending":
+        return `<span class="inline-flex rounded-full border px-1.5 py-px text-[10px] bg-amber-50 text-amber-700 border-amber-200">待结算</span>`;
+      default:
+        return `<span class="text-gray-300">—</span>`;
+    }
+  };
   body.innerHTML = list.map(r => {
     const st = statusMap[r.status] || statusMap.pending;
     const d = r.time ? new Date(r.time) : null;
@@ -961,6 +975,8 @@ function renderOrders(list) {
       r.platform || "",
       r.attempts ? `attempts=${r.attempts}` : "",
       r.source ? `source=${r.source}` : "",
+      r.payout ? `payout=${r.payout}` : "",
+      r.settledAt ? `settled=${new Date(r.settledAt).toLocaleString("zh-CN", { hour12: false })}` : "",
       typeof r.durationMs === "number" ? `${r.durationMs}ms` : "",
     ].filter(Boolean).join(" · ");
     const title = [extra, detail].filter(Boolean).join("\n");
@@ -974,9 +990,37 @@ function renderOrders(list) {
       <td class="px-2 py-1 text-gray-600 whitespace-nowrap">${esc(r.period)}</td>
       <td class="px-2 py-1 font-mono whitespace-nowrap">${esc(r.amount)}</td>
       <td class="px-2 py-1 whitespace-nowrap"><span class="inline-flex rounded-full border px-1.5 py-px text-[10px] ${st[0]}">${st[1]}</span></td>
+      <td class="px-2 py-1 whitespace-nowrap">${resultBadge(r)}</td>
       <td class="px-2 py-1 text-gray-600 max-w-[24rem] truncate" title="${esc(title)}">${esc(detail)}</td>
     </tr>`;
   }).join("");
+}
+
+async function refreshSettlements() {
+  const snap = await apiGet("/api/settlements");
+  const el = document.getElementById("settle-summary");
+  if (!el) return;
+
+  const accounts = (snap && snap.accounts) || [];
+  if (!accounts.length) {
+    el.textContent = "结算：暂无币安账号数据";
+    return;
+  }
+
+  const parts = accounts.map(a => {
+    if (a.error) {
+      return `<span class="mr-2 text-red-500" title="${esc(a.error)}">${esc(a.accountName)} ⚠️</span>`;
+    }
+    const net = Number(a.net || 0);
+    const cls = net >= 0 ? "text-emerald-600" : "text-red-500";
+    const sign = net >= 0 ? "+" : "";
+    const pending = a.pending ? `<span class="text-amber-600">/待 ${a.pending}</span>` : "";
+    return `<span class="mr-2 whitespace-nowrap">${esc(a.accountName)} ` +
+      `<span class="text-emerald-600">赢 ${a.wins}</span>` +
+      `<span class="text-red-500">/输 ${a.losses}</span>${pending} ` +
+      `<span class="${cls} font-medium">${sign}${net.toFixed(2)}</span></span>`;
+  });
+  el.innerHTML = `<span class="text-gray-400 mr-1">${snap.windowHours || 24}h 结算：</span>` + parts.join("");
 }
 
 // ── Toast ──
