@@ -86,6 +86,10 @@ type Service struct {
 	runCtx   context.Context // non-nil while the reconnect loop is running
 	cancel   context.CancelFunc
 
+	// noAccount tracks the "no TurboFlow account configured" idle state so the
+	// message is logged once per transition instead of every retry.
+	noAccount bool
+
 	// authIdx rotates the TurboFlow account used by each reconnect attempt.
 	authIdx atomic.Uint64
 
@@ -230,9 +234,18 @@ func (s *Service) notifyLocked() {
 func (s *Service) runOnce(ctx context.Context) {
 	token, account := s.nextEnabledAuth()
 	if token == "" {
-		s.setError("no enabled TurboFlow account authorization")
+		if !s.hasEnabledAccount() {
+			s.setIdleNoAccount()
+		} else {
+			s.setError("no enabled TurboFlow account authorization")
+		}
 		return
 	}
+
+	s.mu.Lock()
+	s.noAccount = false
+	s.mu.Unlock()
+
 	s.logf(logs.LevelInfo, fmt.Sprintf("using TurboFlow account %s", account))
 
 	wsURL, err := s.signedURL(token)
@@ -376,6 +389,20 @@ func (s *Service) nextEnabledAuth() (token, label string) {
 	i := (s.authIdx.Add(1) - 1) % uint64(len(accounts))
 	a := accounts[i]
 	return a.token, a.label
+}
+
+// hasEnabledAccount reports whether the config has an enabled TurboFlow
+// account, even if its authorization token is still empty.
+func (s *Service) hasEnabledAccount() bool {
+	if s.cfg == nil {
+		return false
+	}
+	for _, task := range s.cfg.Get().Tasks {
+		if task.Type == "turboflow" && task.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) signedURL(token string) (string, error) {
@@ -542,11 +569,33 @@ func (s *Service) logf(level logs.Level, msg string) {
 	}
 }
 
+// setError records an error. Repeating the same message (the reconnect loop
+// calls runOnce periodically) is not logged again; a change is.
 func (s *Service) setError(msg string) {
-	s.logf(logs.LevelError, msg)
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	changed := s.snapshot.LastError != msg
 	s.snapshot.Connected = false
 	s.snapshot.LastError = msg
 	s.snapshot.UpdatedAt = time.Now()
+	s.mu.Unlock()
+
+	if changed {
+		s.logf(logs.LevelError, msg)
+	}
+}
+
+// setIdleNoAccount handles "no TurboFlow account configured" as an idle state
+// rather than an error, and logs the transition only once.
+func (s *Service) setIdleNoAccount() {
+	s.mu.Lock()
+	first := !s.noAccount
+	s.noAccount = true
+	s.snapshot.Connected = false
+	s.snapshot.LastError = ""
+	s.snapshot.UpdatedAt = time.Now()
+	s.mu.Unlock()
+
+	if first {
+		s.logf(logs.LevelInfo, "no enabled TurboFlow account, realtime odds disabled")
+	}
 }

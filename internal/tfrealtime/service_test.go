@@ -1,6 +1,7 @@
 package tfrealtime
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -291,5 +292,43 @@ func TestNextEnabledAuthRotates(t *testing.T) {
 	}
 	if got := NewService(nil, nil).firstEnabledAuth(); got != "" {
 		t.Fatalf("firstEnabledAuth with nil config = %q, want empty", got)
+	}
+}
+
+func TestNoEnabledAccountIsIdleNotError(t *testing.T) {
+	mgr := testConfigManager(t, `[
+		{"id":"bn","name":"bn","type":"binance","enabled":true,"auth":{"csrftoken":"x","p20t":"y"}}
+	]`)
+	s := NewService(mgr, logs.NewLogger(10))
+	s.runOnce(context.Background())
+	s.runOnce(context.Background())
+
+	snap := s.GetSnapshot()
+	if snap.LastError != "" {
+		t.Fatalf("LastError = %q, want empty", snap.LastError)
+	}
+	if snap.Connected {
+		t.Fatal("Connected = true, want false")
+	}
+}
+
+func TestNoEnabledAccountWithNilLogger(t *testing.T) {
+	mgr := testConfigManager(t, `[]`)
+	s := NewService(mgr, nil)
+	s.runOnce(context.Background()) // must not panic
+	if got := s.GetSnapshot().LastError; got != "" {
+		t.Fatalf("LastError = %q, want empty", got)
+	}
+}
+
+func TestEnabledAccountWithoutTokenIsError(t *testing.T) {
+	mgr := testConfigManager(t, `[
+		{"id":"tf","name":"tf","type":"turboflow","enabled":true}
+	]`)
+	s := NewService(mgr, logs.NewLogger(10))
+	s.runOnce(context.Background())
+
+	if got := s.GetSnapshot().LastError; got != "no enabled TurboFlow account authorization" {
+		t.Fatalf("LastError = %q", got)
 	}
 }
