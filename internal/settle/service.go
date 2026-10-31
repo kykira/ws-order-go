@@ -26,7 +26,6 @@ import (
 var txHistoryURL = "https://www.binance.com/bapi/futures/v1/private/future/user-data/transaction-history"
 
 const (
-	windowHours  = 24
 	rowsPerPage  = 100
 	maxPages     = 5
 	pollInterval = 2 * time.Minute
@@ -68,7 +67,7 @@ type AccountStat struct {
 // Snapshot is the API payload for the panel.
 type Snapshot struct {
 	UpdatedAt   time.Time     `json:"updatedAt"`
-	WindowHours int           `json:"windowHours"`
+	WindowStart time.Time     `json:"windowStart"` // stats cover [WindowStart, UpdatedAt]
 	Accounts    []AccountStat `json:"accounts"`
 }
 
@@ -79,9 +78,10 @@ type Service struct {
 	orders *orders.Store
 	client *http.Client
 
-	mu        sync.RWMutex
-	stats     map[string]AccountStat
-	updatedAt time.Time
+	mu          sync.RWMutex
+	stats       map[string]AccountStat
+	updatedAt   time.Time
+	windowStart time.Time
 
 	startOnce sync.Once
 	stopOnce  sync.Once
@@ -141,6 +141,7 @@ func (s *Service) loop() {
 func (s *Service) pollOnce(ctx context.Context) {
 	cfg := s.cfg.Get()
 	now := time.Now()
+	start := windowStart(now)
 	next := make(map[string]AccountStat)
 
 	for _, task := range cfg.Tasks {
@@ -152,7 +153,7 @@ func (s *Service) pollOnce(ctx context.Context) {
 			continue
 		}
 
-		stat, err := s.pollAccount(ctx, task, now)
+		stat, err := s.pollAccount(ctx, task, start, now)
 		if err != nil {
 			s.logger.Error("settle", fmt.Sprintf("task=[%s] transaction history: %v", task.Name, err))
 			s.mu.RLock()
@@ -172,11 +173,12 @@ func (s *Service) pollOnce(ctx context.Context) {
 	s.mu.Lock()
 	s.stats = next
 	s.updatedAt = now
+	s.windowStart = start
 	s.mu.Unlock()
 }
 
-func (s *Service) pollAccount(ctx context.Context, task config.TaskConfig, now time.Time) (AccountStat, error) {
-	entries, err := s.fetchLedger(ctx, task, now.Add(-time.Duration(windowHours)*time.Hour), now)
+func (s *Service) pollAccount(ctx context.Context, task config.TaskConfig, start, now time.Time) (AccountStat, error) {
+	entries, err := s.fetchLedger(ctx, task, start, now)
 	if err != nil {
 		return AccountStat{}, err
 	}
@@ -317,7 +319,7 @@ func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	out := Snapshot{UpdatedAt: s.updatedAt, WindowHours: windowHours}
+	out := Snapshot{UpdatedAt: s.updatedAt, WindowStart: s.windowStart}
 	out.Accounts = make([]AccountStat, 0, len(s.stats))
 	for _, st := range s.stats {
 		out.Accounts = append(out.Accounts, st)
@@ -326,6 +328,14 @@ func (s *Service) Snapshot() Snapshot {
 		return out.Accounts[i].AccountName < out.Accounts[j].AccountName
 	})
 	return out
+}
+
+// windowStart returns today's 00:00 in China Standard Time, so the summary
+// covers the current calendar day (from midnight, not a rolling 24h).
+func windowStart(now time.Time) time.Time {
+	cst := time.FixedZone("CST", 8*60*60)
+	n := now.In(cst)
+	return time.Date(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0, cst)
 }
 
 // periodDuration maps a configured period to its settlement time. Unknown

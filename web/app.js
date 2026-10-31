@@ -1020,7 +1020,18 @@ async function refreshSettlements() {
       `<span class="text-red-500">/输 ${a.losses}</span>${pending} ` +
       `<span class="${cls} font-medium">${sign}${net.toFixed(2)}</span></span>`;
   });
-  el.innerHTML = `<span class="text-gray-400 mr-1">${snap.windowHours || 24}h 结算：</span>` + parts.join("");
+  let label = "今日 00:00 起：";
+  if (snap.windowStart) {
+    const start = new Date(snap.windowStart);
+    const now = new Date();
+    const sameDay = start.getFullYear() === now.getFullYear() &&
+      start.getMonth() === now.getMonth() && start.getDate() === now.getDate();
+    const hm = `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`;
+    label = sameDay
+      ? `今日 ${hm} 起：`
+      : `${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")} ${hm} 起：`;
+  }
+  el.innerHTML = `<span class="text-gray-400 mr-1">${label}</span>` + parts.join("");
 }
 
 // ── Toast ──

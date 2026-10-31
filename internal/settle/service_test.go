@@ -93,8 +93,8 @@ func TestPollClassifiesWinLossPending(t *testing.T) {
 	svc.pollOnce(context.Background())
 
 	snap := svc.Snapshot()
-	if snap.WindowHours != windowHours {
-		t.Fatalf("window = %d, want %d", snap.WindowHours, windowHours)
+	if snap.WindowStart.IsZero() {
+		t.Fatal("window start is zero")
 	}
 	if len(snap.Accounts) != 1 {
 		t.Fatalf("accounts = %d, want 1", len(snap.Accounts))
@@ -135,6 +135,32 @@ func TestMissingCredentialsReportsError(t *testing.T) {
 	snap := svc.Snapshot()
 	if len(snap.Accounts) != 1 || snap.Accounts[0].Error == "" {
 		t.Fatalf("snapshot = %+v", snap)
+	}
+}
+
+func TestWindowStart(t *testing.T) {
+	cst := time.FixedZone("CST", 8*60*60)
+	mk := func(y int, mo time.Month, d, h, mi int) time.Time {
+		return time.Date(y, mo, d, h, mi, 0, 0, cst)
+	}
+
+	cases := []struct{ now, want time.Time }{
+		{mk(2026, 10, 31, 13, 0), mk(2026, 10, 31, 0, 0)},
+		{mk(2026, 10, 31, 9, 0), mk(2026, 10, 31, 0, 0)},
+		{mk(2026, 10, 31, 0, 0), mk(2026, 10, 31, 0, 0)},
+		{mk(2026, 10, 31, 23, 59), mk(2026, 10, 31, 0, 0)},
+		{mk(2026, 11, 1, 0, 30), mk(2026, 11, 1, 0, 0)},
+	}
+	for _, c := range cases {
+		if got := windowStart(c.now); !got.Equal(c.want) {
+			t.Errorf("windowStart(%s) = %s, want %s", c.now, got, c.want)
+		}
+	}
+
+	// 16:30 UTC is already 00:30 the next day in CST.
+	utc := time.Date(2026, 10, 30, 16, 30, 0, 0, time.UTC)
+	if got, want := windowStart(utc), mk(2026, 10, 31, 0, 0); !got.Equal(want) {
+		t.Errorf("windowStart(%s) = %s, want %s", utc, got, want)
 	}
 }
 

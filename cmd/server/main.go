@@ -236,7 +236,7 @@ func handleOrders(store *orders.Store) http.HandlerFunc {
 	}
 }
 
-// handleSettlements serves the Binance settlement stats (last 24h).
+// handleSettlements serves the Binance settlement stats for the current day.
 func handleSettlements(svc *settle.Service) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
