@@ -28,7 +28,7 @@ func newTestConfigManager(t *testing.T, tasks ...config.TaskConfig) *config.Mana
 }
 
 func TestPollClassifiesWinLossPending(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 10, 31, 13, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	at := func(d time.Duration) time.Time { return now.Add(d) }
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +90,7 @@ func TestPollClassifiesWinLossPending(t *testing.T) {
 	pendingID := add("50", at(-1*time.Minute))
 
 	svc := NewService(mgr, logs.NewLogger(20), store)
+	svc.nowFn = func() time.Time { return now }
 	svc.pollOnce(context.Background())
 
 	snap := svc.Snapshot()
@@ -177,5 +178,50 @@ func TestPeriodDuration(t *testing.T) {
 		if got := periodDuration(p); got != want {
 			t.Errorf("periodDuration(%q) = %v, want %v", p, got, want)
 		}
+	}
+}
+
+func TestCrossMidnightSettlement(t *testing.T) {
+	cst := time.FixedZone("CST", 8*60*60)
+	now := time.Date(2026, 10, 31, 0, 30, 0, 0, cst)
+	orderAt := time.Date(2026, 10, 30, 23, 55, 0, 0, cst)
+	payoutAt := time.Date(2026, 10, 31, 0, 25, 0, 0, cst)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": "000000", "success": true, "total": 2,
+			"data": []map[string]any{
+				{"tranId": 1, "balancetype": "EVENT_CONTRACTS_ORDER", "balanceDelta": -150.0, "balanceInfo": "x", "time": orderAt.UnixMilli()},
+				{"tranId": 2, "balancetype": "EVENT_CONTRACTS_PAYOUT", "balanceDelta": 277.5, "balanceInfo": "x", "time": payoutAt.UnixMilli()},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	old := txHistoryURL
+	txHistoryURL = srv.URL
+	defer func() { txHistoryURL = old }()
+
+	mgr := newTestConfigManager(t, config.TaskConfig{
+		ID: "bn1", Name: "bn1", Type: "binance", Enabled: true,
+		Auth: map[string]string{"csrftoken": "c", "p20t": "p"},
+	})
+	store := orders.NewStore(10)
+	id := store.Begin(orders.Record{Account: "bn1", TaskID: "bn1", Amount: "150", Period: "30m"})
+	store.Update(id, func(r *orders.Record) { r.Time = orderAt })
+
+	svc := NewService(mgr, logs.NewLogger(20), store)
+	svc.nowFn = func() time.Time { return now }
+	svc.pollOnce(context.Background())
+
+	rec := store.List(1)[0]
+	if rec.Result != "win" || math.Abs(rec.Payout-277.5) > 0.001 {
+		t.Fatalf("cross-midnight record = %+v, want win 277.5", rec)
+	}
+
+	snap := svc.Snapshot()
+	if len(snap.Accounts) != 1 || snap.Accounts[0].Orders != 0 || snap.Accounts[0].Wins != 0 {
+		t.Fatalf("today stats = %+v, want empty", snap.Accounts)
 	}
 }

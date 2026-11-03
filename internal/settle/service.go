@@ -78,6 +78,9 @@ type Service struct {
 	orders *orders.Store
 	client *http.Client
 
+	// nowFn is time.Now in production and fixed in tests.
+	nowFn func() time.Time
+
 	mu          sync.RWMutex
 	stats       map[string]AccountStat
 	updatedAt   time.Time
@@ -96,6 +99,7 @@ func NewService(cfg *config.Manager, logger *logs.Logger, orderStore *orders.Sto
 		logger: logger,
 		orders: orderStore,
 		client: &http.Client{Timeout: 20 * time.Second},
+		nowFn:  time.Now,
 		stats:  make(map[string]AccountStat),
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
@@ -140,7 +144,7 @@ func (s *Service) loop() {
 
 func (s *Service) pollOnce(ctx context.Context) {
 	cfg := s.cfg.Get()
-	now := time.Now()
+	now := s.now()
 	start := windowStart(now)
 	next := make(map[string]AccountStat)
 
@@ -178,7 +182,10 @@ func (s *Service) pollOnce(ctx context.Context) {
 }
 
 func (s *Service) pollAccount(ctx context.Context, task config.TaskConfig, start, now time.Time) (AccountStat, error) {
-	entries, err := s.fetchLedger(ctx, task, start, now)
+	// Look back far enough to pair orders placed before midnight with payouts
+	// that arrive after it. Only orders at/after start count towards the stats.
+	fetchStart := start.Add(-(maxSettle + settleBuffer))
+	entries, err := s.fetchLedger(ctx, task, fetchStart, now)
 	if err != nil {
 		return AccountStat{}, err
 	}
@@ -230,6 +237,12 @@ func (s *Service) pollAccount(ctx context.Context, task config.TaskConfig, start
 
 		if matched {
 			s.orders.SetResult(id, result, payout, settledAt)
+		}
+
+		// Cross-midnight orders are still reconciled above, but the summary is
+		// scoped to orders placed since the current day's 00:00.
+		if orderTime.Before(start) {
+			continue
 		}
 
 		stat.Orders++
@@ -328,6 +341,14 @@ func (s *Service) Snapshot() Snapshot {
 		return out.Accounts[i].AccountName < out.Accounts[j].AccountName
 	})
 	return out
+}
+
+// now returns the service clock (fixed in tests).
+func (s *Service) now() time.Time {
+	if s.nowFn != nil {
+		return s.nowFn()
+	}
+	return time.Now()
 }
 
 // windowStart returns today's 00:00 in China Standard Time, so the summary
