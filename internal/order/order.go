@@ -683,17 +683,16 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	// - TurboFlow 1021110 (same account submitted too frequently)
 	// - HiBT holding-limit (max open orders for the current symbol/period)
 	// - HiBT duplicate-operation (same account requested too soon)
-	// These retry on a fixed 2s interval for up to 30 retries (~60s) so a
-	// temporarily busy account has a longer window to recover.
+	// These retry on a fixed 1s interval for up to 15 retries (~15s).
 	// Binance 93420018 is different: retrying the same account is useless, so the
 	// processor should immediately fall back to another executable account.
-	maxRetries := 31 // initial + 30 retries
+	maxRetries := 16 // initial + 15 retries
 	sawRetryable := false
 	var lastRespBody []byte
 	var lastStatusCode int
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			delay := 2 * time.Second
+			delay := time.Second
 			c.logger.Info("order", fmt.Sprintf("%stask=[%s] retry %d/%d after %v", tag, task.Name, attempt, maxRetries-1, delay))
 			timer := time.NewTimer(delay)
 			select {
