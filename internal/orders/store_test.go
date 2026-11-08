@@ -209,7 +209,7 @@ func TestFindMatchAndSetResult(t *testing.T) {
 	s := NewStore(10)
 
 	id := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "125", Period: "30m"})
-	s.Update(id, func(r *Record) { r.Time = now.Add(-time.Second) })
+	s.Update(id, func(r *Record) { r.Time = now.Add(-time.Second); r.Status = StatusSuccess })
 
 	// Wrong amount, task or time window must not match.
 	if _, _, ok := s.FindMatch("bn1", 100, now, 30*time.Second); ok {
@@ -238,7 +238,7 @@ func TestFindMatchAndSetResult(t *testing.T) {
 
 	// pending records stay matchable for a later update.
 	id2 := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "50", Period: "30m"})
-	s.Update(id2, func(r *Record) { r.Time = now })
+	s.Update(id2, func(r *Record) { r.Time = now; r.Status = StatusSuccess })
 	s.SetResult(id2, "pending", 0, time.Time{})
 	if got, _, ok := s.FindMatch("bn1", 50, now, 30*time.Second); !ok || got != id2 {
 		t.Fatalf("pending record should remain matchable, got %d/%v", got, ok)
@@ -249,7 +249,7 @@ func TestFindMatchAndSetResult(t *testing.T) {
 
 	// A premature loss stays matchable so a later payout can correct it to win.
 	id3 := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "75", Period: "30m"})
-	s.Update(id3, func(r *Record) { r.Time = now })
+	s.Update(id3, func(r *Record) { r.Time = now; r.Status = StatusSuccess })
 	s.SetResult(id3, "loss", 0, now)
 	got3, _, ok := s.FindMatch("bn1", 75, now, 30*time.Second)
 	if !ok || got3 != id3 {
@@ -258,5 +258,12 @@ func TestFindMatchAndSetResult(t *testing.T) {
 	s.SetResult(got3, "win", 138.75, now)
 	if rec := s.List(1)[0]; rec.Result != "win" || rec.Payout != 138.75 {
 		t.Fatalf("corrected record = %+v", rec)
+	}
+
+	// A failed request never reached the exchange, so it must not be matched.
+	id4 := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "200", Period: "30m"})
+	s.Update(id4, func(r *Record) { r.Time = now; r.Status = StatusFailed })
+	if _, _, ok := s.FindMatch("bn1", 200, now, 30*time.Second); ok {
+		t.Fatal("failed record must not be matched")
 	}
 }

@@ -108,3 +108,18 @@ func TestRandomDelaySkippedWithoutBinanceConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestRetryDelay(t *testing.T) {
+	want := []time.Duration{
+		time.Second, 2 * time.Second, 4 * time.Second,
+		8 * time.Second, 10 * time.Second, 10 * time.Second,
+	}
+	for i, w := range want {
+		if got := retryDelay(i + 1); got != w {
+			t.Errorf("retryDelay(%d) = %v, want %v", i+1, got, w)
+		}
+	}
+	if got := retryDelay(0); got != time.Second {
+		t.Errorf("retryDelay(0) = %v, want 1s", got)
+	}
+}

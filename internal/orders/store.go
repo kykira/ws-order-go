@@ -161,9 +161,11 @@ func (s *Store) Update(id int64, fn func(*Record)) {
 	}
 }
 
-// FindMatch returns the nearest record for taskID/amount within window of at
-// that has not been won yet. "pending" and "loss" records stay matchable so a
-// payout arriving after a conservative loss deadline can still correct it.
+// FindMatch returns the nearest successfully placed record for taskID/amount
+// within window of at that has not been won yet. Failed requests are skipped:
+// only a request that actually reached the exchange can have a settlement.
+// "pending" and "loss" results stay matchable so a payout arriving after a
+// conservative loss deadline can still correct it.
 func (s *Store) FindMatch(taskID string, amount float64, at time.Time, window time.Duration) (int64, string, bool) {
 	if s == nil || window <= 0 {
 		return 0, "", false
@@ -177,6 +179,9 @@ func (s *Store) FindMatch(taskID string, amount float64, at time.Time, window ti
 	for _, r := range s.recs {
 		if r.TaskID != taskID {
 			continue
+		}
+		if r.Status != StatusSuccess {
+			continue // failed/retrying/pending requests have no settlement
 		}
 		if r.Result != "" && r.Result != "pending" && r.Result != "loss" {
 			continue

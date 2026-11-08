@@ -82,7 +82,7 @@ func TestPollClassifiesWinLossPending(t *testing.T) {
 			Account: "bn1", TaskID: "bn1", Amount: amount, Period: "30m",
 			Action: "buy", Symbol: "BTCUSDT",
 		})
-		store.Update(id, func(r *orders.Record) { r.Time = when })
+		store.Update(id, func(r *orders.Record) { r.Time = when; r.Status = orders.StatusSuccess })
 		return id
 	}
 	winID := add("125", at(-10*time.Minute))
@@ -209,7 +209,7 @@ func TestCrossMidnightSettlement(t *testing.T) {
 	})
 	store := orders.NewStore(10)
 	id := store.Begin(orders.Record{Account: "bn1", TaskID: "bn1", Amount: "150", Period: "30m"})
-	store.Update(id, func(r *orders.Record) { r.Time = orderAt })
+	store.Update(id, func(r *orders.Record) { r.Time = orderAt; r.Status = orders.StatusSuccess })
 
 	svc := NewService(mgr, logs.NewLogger(20), store)
 	svc.nowFn = func() time.Time { return now }

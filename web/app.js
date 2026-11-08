@@ -952,6 +952,7 @@ function renderOrders(list) {
     return `<span class="inline-flex items-center rounded px-1.5 py-px text-[10px] bg-gray-50 text-gray-600 border border-gray-200">${esc(action || "--")}</span>`;
   };
   const resultBadge = (r) => {
+    if (r.status === "failed") return `<span class="text-gray-300">—</span>`;
     switch (r.result) {
       case "win":
         return `<span class="inline-flex rounded-full border px-1.5 py-px text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">赢</span>`;
