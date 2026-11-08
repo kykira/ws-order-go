@@ -683,17 +683,17 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	// - TurboFlow 1021110 (same account submitted too frequently)
 	// - HiBT holding-limit (max open orders for the current symbol/period)
 	// - HiBT duplicate-operation (same account requested too soon)
-	// These retry with exponential backoff (1s, 2s, 4s, ... capped at 10s) so a
-	// temporarily busy account is retried without hammering it.
+	// These retry on a fixed 2s interval for up to 30 retries (~60s) so a
+	// temporarily busy account has a longer window to recover.
 	// Binance 93420018 is different: retrying the same account is useless, so the
 	// processor should immediately fall back to another executable account.
-	maxRetries := 11 // initial + 10 retries
+	maxRetries := 31 // initial + 30 retries
 	sawRetryable := false
 	var lastRespBody []byte
 	var lastStatusCode int
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			delay := retryDelay(attempt)
+			delay := 2 * time.Second
 			c.logger.Info("order", fmt.Sprintf("%stask=[%s] retry %d/%d after %v", tag, task.Name, attempt, maxRetries-1, delay))
 			timer := time.NewTimer(delay)
 			select {
@@ -846,28 +846,4 @@ func (c *Client) httpClientForTask(task config.TaskConfig) (tls_client.HttpClien
 
 	c.httpClients[task.ID] = newClient
 	return newClient, nil
-}
-
-const (
-	retryBaseDelay = time.Second
-	retryMaxDelay  = 10 * time.Second
-)
-
-// retryDelay returns the exponential backoff before retry attempt (1-based):
-// 1s, 2s, 4s, 8s, then capped at 10s.
-func retryDelay(attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
-	}
-	d := retryBaseDelay
-	for i := 1; i < attempt; i++ {
-		if d >= retryMaxDelay {
-			break
-		}
-		d *= 2
-	}
-	if d > retryMaxDelay {
-		d = retryMaxDelay
-	}
-	return d
 }
