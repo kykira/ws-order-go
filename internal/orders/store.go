@@ -279,6 +279,16 @@ func (s *Store) load() {
 		}
 		s.recs = append(s.recs, &r)
 	}
+	// A settlement only exists for a request that reached the exchange. Clear
+	// results left on failed/retrying/pending records by older versions.
+	for _, r := range s.recs {
+		if r.Status != StatusSuccess && (r.Result != "" || r.Payout != 0 || r.SettledAt != nil) {
+			r.Result = ""
+			r.Payout = 0
+			r.SettledAt = nil
+			s.dirty = true
+		}
+	}
 }
 
 func (s *Store) flushLoop() {

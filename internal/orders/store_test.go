@@ -267,3 +267,31 @@ func TestFindMatchAndSetResult(t *testing.T) {
 		t.Fatal("failed record must not be matched")
 	}
 }
+
+// Older versions could leave a settlement result on a failed record; loading
+// must clear it so failed requests never show a win/loss.
+func TestPersistentStoreClearsResultsOnUnsuccessfulRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "orders.json")
+
+	s := NewPersistentStore(10, path)
+	id := s.Begin(Record{TaskID: "bn1", Account: "bn1", Amount: "125", Period: "30m"})
+	now := time.Now()
+	s.Update(id, func(r *Record) {
+		r.Status = StatusFailed
+		r.Result = "win"
+		r.Payout = 231.25
+		r.SettledAt = &now
+	})
+	s.Close()
+
+	s2 := NewPersistentStore(10, path)
+	defer s2.Close()
+
+	rec := s2.List(1)[0]
+	if rec.Status != StatusFailed {
+		t.Fatalf("status = %q, want failed", rec.Status)
+	}
+	if rec.Result != "" || rec.Payout != 0 || rec.SettledAt != nil {
+		t.Fatalf("failed record kept a result: %+v", rec)
+	}
+}
