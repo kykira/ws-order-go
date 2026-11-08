@@ -895,11 +895,20 @@ function appendLog(entry) {
 // ── Orders table ──
 
 let lastOrdersHash = "";
+let lastOrders = [];
 
 function initOrders() {
   document.querySelectorAll("[data-log-tab]").forEach(btn => {
     btn.addEventListener("click", () => switchLogTab(btn.getAttribute("data-log-tab")));
   });
+  const showFailed = document.getElementById("show-failed");
+  if (showFailed) {
+    showFailed.checked = localStorage.getItem("orders.showFailed") === "1";
+    showFailed.addEventListener("change", () => {
+      localStorage.setItem("orders.showFailed", showFailed.checked ? "1" : "0");
+      renderOrders(lastOrders);
+    });
+  }
   refreshOrders().catch(console.error);
   setInterval(() => refreshOrders().catch(console.error), 2000);
   refreshSettlements().catch(console.error);
@@ -922,6 +931,7 @@ function switchLogTab(tab) {
 async function refreshOrders() {
   const list = await apiGet("/api/orders?limit=200");
   const arr = Array.isArray(list) ? list : [];
+  lastOrders = arr;
   const hash = JSON.stringify(arr);
   if (hash === lastOrdersHash) return;
   lastOrdersHash = hash;
@@ -931,8 +941,17 @@ async function refreshOrders() {
 function renderOrders(list) {
   const body = document.getElementById("orders-body");
   if (!body) return;
-  if (!list.length) {
-    body.innerHTML = `<tr><td colspan="10" class="px-2 py-3 text-center text-gray-400">暂无订单记录</td></tr>`;
+  list = Array.isArray(list) ? list : [];
+
+  const showFailed = document.getElementById("show-failed")?.checked === true;
+  const failedCount = list.filter(r => r.status === "failed").length;
+  const visible = showFailed ? list : list.filter(r => r.status !== "failed");
+  const note = document.getElementById("orders-fold-note");
+  if (note) note.textContent = (!showFailed && failedCount) ? `已折叠 ${failedCount} 条失败请求` : "";
+
+  if (!visible.length) {
+    const msg = failedCount ? `已折叠 ${failedCount} 条失败请求` : "暂无订单记录";
+    body.innerHTML = `<tr><td colspan="10" class="px-2 py-3 text-center text-gray-400">${msg}</td></tr>`;
     return;
   }
   const statusMap = {
@@ -964,7 +983,7 @@ function renderOrders(list) {
         return `<span class="text-gray-300">—</span>`;
     }
   };
-  body.innerHTML = list.map(r => {
+  body.innerHTML = visible.map(r => {
     const st = statusMap[r.status] || statusMap.pending;
     const d = r.time ? new Date(r.time) : null;
     const time = d

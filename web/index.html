@@ -77,12 +77,19 @@
 
   <!-- Orders / Logs -->
   <div class="bg-white border rounded-lg p-3">
-    <div class="flex items-center justify-between mb-1">
+    <div class="flex items-center justify-between gap-2 mb-1 flex-wrap">
       <div class="flex items-center gap-1">
         <button id="tab-orders" class="log-tab log-tab-active" data-log-tab="orders">订单记录</button>
         <button id="tab-logs" class="log-tab" data-log-tab="logs">原始日志</button>
       </div>
-      <span class="text-[10px] text-gray-400">最近 200 单</span>
+      <div class="flex items-center gap-2">
+        <label class="inline-flex items-center gap-1 text-[10px] text-gray-500 cursor-pointer select-none">
+          <input id="show-failed" type="checkbox" class="accent-emerald-600">
+          显示失败请求
+        </label>
+        <span id="orders-fold-note" class="text-[10px] text-gray-400"></span>
+        <span class="text-[10px] text-gray-400">最近 200 单</span>
+      </div>
     </div>
     <div id="orders-panel">
       <div id="settle-summary" class="text-[10px] text-gray-500 mb-1 leading-relaxed"></div>
