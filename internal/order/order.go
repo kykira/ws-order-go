@@ -683,9 +683,9 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 	// - TurboFlow 1021110 (same account submitted too frequently)
 	// - HiBT holding-limit (max open orders for the current symbol/period)
 	// - HiBT duplicate-operation (same account requested too soon)
-	// These retry on a fixed 1s interval for up to 15 retries (~15s).
-	// Binance 93420018 is different: retrying the same account is useless, so the
-	// processor should immediately fall back to another executable account.
+	// These retry on a fixed 1s interval for up to 15 retries (~15s). Binance
+	// 93420018 (open order number limit) is retried the same way; after the
+	// retries are exhausted the processor falls back to another account.
 	maxRetries := 16 // initial + 15 retries
 	sawRetryable := false
 	var lastRespBody []byte
@@ -748,11 +748,7 @@ func (c *Client) PlaceOrder(ctx context.Context, task config.TaskConfig, req Pla
 						r.Message = msg
 					})
 				}
-				if bizResp.Code == "93420018" {
-					c.logger.Info("order", fmt.Sprintf("%stask=[%s] order-number limit reached, fallback to another account", tag, task.Name))
-					return fmt.Errorf("%w: binance error code=%s", ErrOrderLimitReached, string(bizResp.Code))
-				}
-				if bizResp.Errno == "1021110" || (task.Type == "hibt" && (isHIBTHoldingLimit(bizResp) || isHIBTDuplicateOperation(bizResp))) {
+				if bizResp.Code == "93420018" || bizResp.Errno == "1021110" || (task.Type == "hibt" && (isHIBTHoldingLimit(bizResp) || isHIBTDuplicateOperation(bizResp))) {
 					sawRetryable = true
 					if recorder != nil {
 						recorder.Update(recordID, func(r *orders.Record) { r.Status = orders.StatusRetrying })

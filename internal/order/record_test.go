@@ -129,3 +129,39 @@ func TestPlaceOrderRecordsRetryAndSource(t *testing.T) {
 		t.Fatalf("source = %q, want fallback", rec.Source)
 	}
 }
+
+// Binance 93420018 (open order number limit) must now retry like the other
+// retryable errors instead of falling back immediately.
+func TestPlaceOrderRetriesBinanceOrderLimit(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		if atomic.AddInt32(&calls, 1) == 1 {
+			_, _ = w.Write([]byte(`{"code":"93420018","message":"Open order number has reached maximum limit.","success":false}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":"000000","message":null,"data":{},"success":true}`))
+	}))
+	defer srv.Close()
+
+	c, store := newRecordingClient()
+	withURLOverride(t, "binance", srv.URL)
+
+	err := c.PlaceOrder(context.Background(), binanceTask(), PlaceOrderRequest{
+		Amount: "125", Action: "buy", Symbol: "ETHUSDT", Period: "30m", Strategy: "st-1",
+	})
+	if err != nil {
+		t.Fatalf("PlaceOrder: %v", err)
+	}
+
+	rec := store.List(1)[0]
+	if rec.Status != orders.StatusSuccess {
+		t.Fatalf("status = %q, want success", rec.Status)
+	}
+	if rec.Attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", rec.Attempts)
+	}
+	if rec.Code != "000000" {
+		t.Fatalf("code = %q, want 000000", rec.Code)
+	}
+}
