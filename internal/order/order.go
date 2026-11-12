@@ -832,6 +832,12 @@ func (c *Client) httpClientForTask(task config.TaskConfig) (tls_client.HttpClien
 		tls_client.WithInsecureSkipVerify(),
 		tls_client.WithCookieJar(jar),
 	}
+	// apis.turboflow.xyz now negotiates h2 via ALPN, but tls-client's transport
+	// speaks HTTP/1.1, so the h2 SETTINGS frame is parsed as a malformed HTTP/1.x
+	// response. Force HTTP/1.1 for TurboFlow order submissions.
+	if task.Type == "turboflow" {
+		options = append(options, tls_client.WithForceHttp1())
+	}
 
 	newClient, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
 	if err != nil {
